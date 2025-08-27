@@ -1,0 +1,39 @@
+# Virtual environment
+venv/
+.venv/
+ENV/
+
+# Python cache and build files
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Environment variables
+# .env
+.env.local
+
+# IDE-specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# MongoDB data
+# data/
+mongodb_data/
+*.ns
+*.mongod.lock
+
+# Flask debugger and temp files
+instance/
+*.log
+*.sqlite
+
+# Coverage reports
+.coverage
+htmlcov/
