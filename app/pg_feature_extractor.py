@@ -2,7 +2,6 @@ import psycopg
 from psycopg import sql
 from typing import Self, Optional, Any
 from dataclasses import dataclass
-from datetime import datetime
 
 
 @dataclass
@@ -333,6 +332,28 @@ class PostgresFeatureExtractor:
                 f"{table_name}: {e}"
             )
             return []
+
+    def get_postgres_internal_metrics(
+            self: Self
+    ) -> dict[str, Any]:
+        """Get detailed PostgreSQL internal metrics."""
+
+        queries = {
+            'locks': "SELECT mode, count(*) FROM pg_locks GROUP BY mode",
+            'buffer_cache': "SELECT * FROM pg_buffercache_summary()",
+            'wal_stats': "SELECT * FROM pg_stat_wal",
+        }
+        
+        metrics = {}
+        for name, query in queries.items():
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute(query)
+                    metrics[name] = cur.fetchall()
+            except:
+                metrics[name] = None
+                
+        return metrics
 
 
 # Example usage

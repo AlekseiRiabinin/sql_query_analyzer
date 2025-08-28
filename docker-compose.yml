@@ -1,5 +1,4 @@
 services:
-  # PostgreSQL Database Service
   postgres:
     build: ./postgres
     container_name: vtb_postgres
@@ -7,10 +6,6 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
     env_file:
       - .env
     healthcheck:
@@ -24,7 +19,8 @@ services:
     build: ./app
     container_name: vtb_api
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}\
+        @postgres:5432/${POSTGRES_DB}
     ports:
       - "${API_PORT}:8000"
     volumes:
