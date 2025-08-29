@@ -17,8 +17,8 @@ SELECT
     local_blks_written,
     temp_blks_read,
     temp_blks_written,
-    blk_read_time,
-    blk_write_time
+    temp_blk_read_time,
+    temp_blk_write_time
 FROM pg_stat_statements
 ORDER BY mean_exec_time DESC;
 

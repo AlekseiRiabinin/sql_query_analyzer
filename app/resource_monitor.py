@@ -1,3 +1,6 @@
+"""Resource monitor of Docker containers."""
+
+
 import os
 import time
 import psutil

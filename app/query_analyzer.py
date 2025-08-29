@@ -1,3 +1,6 @@
+"""Analyzer of SQL queries."""
+
+
 import psycopg
 import time
 import hashlib
@@ -63,7 +66,7 @@ class QueryAnalysisResult:
     contains_join: bool = False
     contains_sort: bool = False
     contains_aggregate: bool = False
-    
+
     # Security and safety flags
     is_read_only: bool = True
 

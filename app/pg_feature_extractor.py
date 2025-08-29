@@ -1,3 +1,6 @@
+"""Extractor of PostgreSQL features."""
+
+
 import psycopg
 from psycopg import sql
 from typing import Self, Optional, Any
