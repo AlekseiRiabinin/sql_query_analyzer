@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def get_db_connection() -> psycopg.Connection:
+def get_db() -> psycopg.Connection:
     """Create a connection to the PostgreSQL database."""
 
     database_url = os.getenv("DATABASE_URL")

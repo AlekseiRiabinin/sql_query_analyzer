@@ -1,5 +1,6 @@
 import psycopg
 import time
+import hashlib
 from datetime import datetime
 from typing import Self, Any, Optional
 from dataclasses import dataclass, field
@@ -65,7 +66,7 @@ class QueryAnalysisResult:
     
     # Security and safety flags
     is_read_only: bool = True
-    requires_superuser: bool = False
+
 
     def to_dict(self: Self) -> dict[str, Any]:
         """Convert the analysis result to a dict."""
@@ -113,8 +114,8 @@ class QueryAnalyzer:
         """Initialization with database connection."""
 
         self.conn = connection
+        self.resource_monitor = None
         self.feature_extractor = PostgresFeatureExtractor(connection)
-        self.resource_monitor = ContainersResourceMonitor()
 
         # Initialize cache for historical data to avoid repeated queries
         self._historical_cache: dict[str, dict[str, Any]] = {}
@@ -141,14 +142,19 @@ class QueryAnalyzer:
             all_resources = None
             if include_resources:
                 try:
-                    all_resources = (
-                        self.resource_monitor.get_all_container_resources()
-                    )
+                    monitor = self._get_resource_monitor()
+                    if monitor:
+                        all_resources = (
+                            monitor.get_all_container_resources()
+                        )
+                    else:
+                        all_resources = None
                 except Exception as resource_error:
                     print(
-                        f"Warning: Could not get "
-                        f"container resources: {resource_error}"
+                        f"Warning: Could not get container "
+                        f"resources: {resource_error}"
                     )
+                    all_resources = None
             
             # Get historical performance data (with caching)
             historical_stats = None
@@ -171,8 +177,17 @@ class QueryAnalyzer:
                     "Failed to get execution plan for query"
                 )
   
-            plan_data = execution_plan[0].get("Plan", {})
-            
+            if (
+                not execution_plan or 
+                not isinstance(execution_plan, list)
+            ):
+                raise psycopg.Error("Invalid execution plan format")
+
+            plan_data = (
+                execution_plan[0].get("Plan", {}) 
+                if execution_plan else {}
+            )
+
             # Get PostgreSQL internal metrics if successful connection
             postgres_metrics = None
             try:
@@ -185,7 +200,7 @@ class QueryAnalyzer:
                     f"Warning: Could not get PostgreSQL "
                     f"internal metrics: {metrics_error}"
                 )
-            
+
             # Create analysis result with all collected data
             analysis_result = QueryAnalysisResult(
                 query=sql_query,
@@ -202,7 +217,16 @@ class QueryAnalyzer:
                 postgres_metrics=postgres_metrics,
                 plan_width=plan_data.get("Plan Width"),
                 actual_rows=plan_data.get("Actual Rows"),
-                actual_loops=plan_data.get("Actual Loops")
+                actual_loops=plan_data.get("Actual Loops"),
+                planning_time=plan_data.get("Planning Time"),
+                execution_time=plan_data.get("Execution Time"),
+                predicted_memory_bytes=None,
+                predicted_cpu_seconds=None,
+                query_type=None,
+                contains_join=False,
+                contains_sort=False,
+                contains_aggregate=False,
+                is_read_only=True
             )
             
             # Generate recommendations
@@ -212,7 +236,7 @@ class QueryAnalyzer:
             self._classify_query_type(analysis_result, sql_query)
             
             return analysis_result
-            
+
         except psycopg.Error as e:
             error_msg = f"Failed to analyze query: {e}"
             if "canceling statement due to statement timeout" in str(e):
@@ -226,6 +250,16 @@ class QueryAnalyzer:
             raise psycopg.Error(
                 f"Unexpected error during query analysis: {e}"
             ) from e
+
+    def _get_resource_monitor(self: Self) -> ContainersResourceMonitor:
+        """Lazy initialization of ContainersResourceMonitor."""
+        
+        if self.resource_monitor is None:
+            try:
+                self.resource_monitor = ContainersResourceMonitor()
+            except Exception:
+                self.resource_monitor = None
+        return self.resource_monitor
 
     def _get_historical_query_stats(
             self: Self,
@@ -276,12 +310,7 @@ class QueryAnalyzer:
         """Create a simplified pattern for query matching."""
 
         normalized = ' '.join(sql_query.split()).lower()
-        normalized = ' '.join(
-            line for line 
-            in normalized.split('--') 
-            if line.strip()
-        )
-        return normalized[:100]
+        return hashlib.md5(normalized.encode()).hexdigest()
 
     def _generate_recommendations(
             self: Self,
@@ -357,14 +386,13 @@ class QueryAnalyzer:
     ) -> None:
         """Analyze buffer cache efficiency."""
     
-        total_buffers = (
-            analysis_result.shared_buffers_hit + 
-            analysis_result.shared_buffers_read
-        )
+        hit = analysis_result.shared_buffers_hit
+        read = analysis_result.shared_buffers_read
+
+        total_buffers = hit + read
+
         if total_buffers > 0:
-            cache_hit_ratio = (
-                analysis_result.shared_buffers_hit / total_buffers
-            ) * 100
+            cache_hit_ratio = (hit / total_buffers) * 100
             if cache_hit_ratio < 90:
                 recs.append({
                     "type": "configuration",
@@ -378,6 +406,8 @@ class QueryAnalyzer:
                     ),
                     "cache_hit_ratio": cache_hit_ratio
                 })
+        else:
+            cache_hit_ratio = 100 
 
     def _analyze_sort_operation(
             self: Self,
@@ -405,19 +435,24 @@ class QueryAnalyzer:
             recs: list[dict[str, Any]]
     ) -> None:
         """Generate recommendations from containers resources."""
-        if not analysis_result.container_resources:
+
+        monitor = self._get_resource_monitor()
+        if not monitor:
             return
-            
-        app_metrics = (
-            analysis_result.container_resources.get(
-                'application_container', {}
-            )
+
+        container_resources = (
+            monitor.get_all_container_resources()
         )
-        pg_metrics = (
-            analysis_result.container_resources.get(
-                'postgres_container', {}
-            )
+        if not container_resources:
+            return
+
+        app_metrics = container_resources.get(
+            'application_container', {}
         )
+        pg_metrics = container_resources.get(
+            'postgres_container', {}
+        )
+
         pg_internal = analysis_result.postgres_metrics or {}
         
         # PostgreSQL Container Memory Pressure
@@ -532,13 +567,30 @@ class QueryAnalyzer:
                 "threshold": 80
             })
 
+        # disk IOPS
+        pg_disk_iops = pg_metrics.get('disk_io', {}).get('iops', 0)
+        if pg_disk_iops > 1000:
+            recs.append({
+                "type": "io",
+                "priority": "MEDIUM",
+                "message": "High disk IOPS detected"
+            })
+
     def _generate_resource_aware_recommendations(
             self: Self,
             analysis_result: QueryAnalysisResult,
             recs: list[dict[str, Any]]
     ) -> None:
         """Focuses on application container resources."""
-        if not analysis_result.container_resources:
+
+        monitor = self._get_resource_monitor()
+        if not monitor:
+            return
+        
+        container_resources = (
+            monitor.get_all_container_resources()
+        )
+        if not container_resources:
             return
             
         app_metrics = (
@@ -552,7 +604,7 @@ class QueryAnalyzer:
         app_high_cpu = (
             app_metrics.get('cpu', {}).get('percent_used', 0) > 70
         )
-        
+
         if (
             app_memory_pressure and 
             analysis_result.plan_rows > 10000
@@ -649,13 +701,14 @@ class QueryAnalyzer:
                 cur.execute(
                     f"SET statement_timeout = {timeout_seconds * 1000};"
                 )
-                cur.execute(
-                    f"EXPLAIN (FORMAT JSON, COSTS, BUFFERS) {sql_query}"
-                )
-                result = cur.fetchone()
-                # Reset timeout
-                cur.execute("RESET statement_timeout;")
-                return result[0] if result else None
+                try:
+                    cur.execute(
+                        f"EXPLAIN (FORMAT JSON, COSTS, BUFFERS) {sql_query}"
+                    )
+                    result = cur.fetchone()
+                    return result[0] if result else None
+                finally:
+                    cur.execute("RESET statement_timeout;")
 
         except psycopg.Error as e:
             if "statement timeout" in str(e):
@@ -672,43 +725,83 @@ class QueryAnalyzer:
             sql_query: str
     ) -> None:
         """Classify query type and set relevant flags."""
-
-        query_upper = sql_query.upper().strip()  
-
-        if query_upper.startswith('SELECT'):
+        
+        query_upper = sql_query.upper().strip()
+        
+        query_clean = ' '.join(
+            line for line in query_upper.split('\n') 
+            if not line.strip().startswith('--')
+        ).strip()
+        
+        if query_clean.startswith(('WITH', 'SELECT')):
             analysis_result.query_type = "SELECT"
             analysis_result.is_read_only = True
-
-        elif query_upper.startswith('INSERT'):
+            
+        elif query_clean.startswith('INSERT'):
             analysis_result.query_type = "INSERT"
             analysis_result.is_read_only = False
-
-        elif query_upper.startswith('UPDATE'):
-            analysis_result.query_type = "UPDATE" 
+            
+        elif query_clean.startswith('UPDATE'):
+            analysis_result.query_type = "UPDATE"
             analysis_result.is_read_only = False
-
-        elif query_upper.startswith('DELETE'):
-            analysis_result.query_type = "DELETE"
+            
+        elif query_clean.startswith('DELETE'):
+            analysis_result.query_type = "DELETE" 
             analysis_result.is_read_only = False
-
+            
+        elif query_clean.startswith(('CREATE', 'DROP', 'ALTER')):
+            analysis_result.query_type = "DDL"
+            analysis_result.is_read_only = False
+            
+        elif query_clean.startswith(('GRANT', 'REVOKE')):
+            analysis_result.query_type = "DCL"
+            analysis_result.is_read_only = False
+            
         else:
             analysis_result.query_type = "OTHER"
-        
-        # Detect complex operations from the plan
-        if analysis_result.execution_plan:
-            plan_str = str(analysis_result.execution_plan).upper()
-            analysis_result.contains_join = any(
-                op in plan_str 
-                for op in [
-                    'JOIN', 'NESTED LOOP',
-                    'HASH JOIN', 'MERGE JOIN'
+            analysis_result.is_read_only = not any(
+                keyword in query_clean 
+                for keyword in [
+                    'INSERT', 'UPDATE', 'DELETE',
+                    'CREATE', 'DROP', 'ALTER'
                 ]
             )
-            analysis_result.contains_sort = 'SORT' in plan_str
-            analysis_result.contains_aggregate = any(
-                op in plan_str 
-                for op in ['AGGREGATE', 'GROUP', 'HASHAGG']
+        
+        if analysis_result.execution_plan:
+            plan_str = str(analysis_result.execution_plan).upper()
+            
+            analysis_result.contains_join = any(
+                join_pattern in plan_str 
+                for join_pattern in [
+                    'JOIN', 'NESTED LOOP', 'HASH JOIN',
+                    'MERGE JOIN', 'NESTED LOOP INNER',
+                    'NESTED LOOP LEFT', 'HASH INNER JOIN'
+                ]
             )
+
+            analysis_result.contains_sort = any(
+                sort_pattern in plan_str 
+                for sort_pattern in [
+                    'SORT', 'ORDER BY', 'SORT KEY'
+                ]
+            )
+            
+            analysis_result.contains_aggregate = any(
+                agg_pattern in plan_str 
+                for agg_pattern in [
+                    'AGGREGATE', 'GROUP', 'HASHAGG',
+                    'GROUPAGG', 'GROUP BY', 
+                    'COUNT(', 'SUM(', 'AVG(', 'MAX(', 'MIN('
+                ]
+            )
+            
+            if 'INDEX ONLY SCAN' in plan_str:
+                analysis_result.recommendations.append({
+                    "type": "performance",
+                    "priority": "LOW", 
+                    "message": "Query using index-only scan",
+                    "optimization": "index_only_scan"
+                })
 
     def should_reject_query(
         self: Self,

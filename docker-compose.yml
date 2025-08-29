@@ -1,6 +1,8 @@
 services:
   postgres:
-    build: ./postgres
+    build: 
+      context: ./postgres
+      dockerfile: Dockerfile
     container_name: vtb_postgres
     ports:
       - "${POSTGRES_PORT}:5432"
@@ -16,15 +18,17 @@ services:
       start_period: 40s
 
   api:
-    build: ./app
+    build: 
+      context: ./app
+      dockerfile: Dockerfile
     container_name: vtb_api
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}\
-        @postgres:5432/${POSTGRES_DB}
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     ports:
       - "${API_PORT}:8000"
     volumes:
       - ./app:/app
+      - /var/run/docker.sock:/var/run/docker.sock 
     env_file:
       - .env
     depends_on:

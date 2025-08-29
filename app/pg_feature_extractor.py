@@ -47,55 +47,47 @@ class PostgresFeatureExtractor:
         self.conn = connection
 
     def get_table_size(
-            self: Self,
-            table_name: int
+        self: Self,
+        table_name: str
     ) -> Optional[TableSize]:
-        """Get approximate table size."""
+        """Get approximate table size (including indexes)."""
 
         query = sql.SQL("""
             SELECT 
                 pg_size_pretty(pg_total_relation_size(%s)),
                 pg_total_relation_size(%s) as bytes
-            WHERE EXISTS (
-                SELECT 1 FROM information_schema.tables 
-                WHERE table_name = %s
-            );
         """)
         try:
             with self.conn.cursor() as cur:
-                cur.execute(
-                    query, (table_name, table_name, table_name)
-                )
+                cur.execute(query, (table_name, table_name))
                 result = cur.fetchone()
-                return (
-                    TableSize(result[0], result[1]) 
-                    if result else None
-                )
+                if result:
+                    return TableSize(
+                        pretty_size=result[0], 
+                        bytes_size=result[1]
+                    )
+                return None
 
         except psycopg.Error as e:
             print(f"Error getting table size for {table_name}: {e}")
             return None
 
     def get_table_indexes(
-            self: Self,
-            table_name: str
+        self: Self,
+        table_name: str
     ) -> list[IndexInfo]:
         """Get a list of indexes for a table."""
 
         query = sql.SQL("""
             SELECT 
-                i.indexname, 
-                i.indexdef,
-                ix.indisunique as is_unique
+                indexname, 
+                indexdef,
+                indisunique
             FROM pg_indexes i
-            JOIN pg_class c ON c.relname = i.tablename
             JOIN pg_index ix ON ix.indexrelid = (
-                SELECT oid 
-                FROM pg_class 
-                WHERE relname = i.indexname
+                SELECT oid FROM pg_class WHERE relname = i.indexname
             )
             WHERE i.tablename = %s
-            ORDER BY i.indexname;
         """)
         try:
             with self.conn.cursor() as cur:
@@ -123,7 +115,11 @@ class PostgresFeatureExtractor:
                 null_frac, 
                 avg_width, 
                 n_distinct, 
-                most_common_vals::text[]
+                CASE 
+                    WHEN most_common_vals IS NOT NULL 
+                    THEN most_common_vals::text[]
+                    ELSE NULL 
+                END as most_common_vals
             FROM pg_stats 
             WHERE tablename = %s AND attname = %s;
         """)
@@ -162,7 +158,7 @@ class PostgresFeatureExtractor:
                 rows,
                 shared_blks_hit,
                 shared_blks_read
-            FROM pg_stat_statements 
+            FROM public.pg_stat_statements 
             ORDER BY mean_exec_time DESC 
             LIMIT %s;
         """)
@@ -336,23 +332,26 @@ class PostgresFeatureExtractor:
     def get_postgres_internal_metrics(
             self: Self
     ) -> dict[str, Any]:
-        """Get detailed PostgreSQL internal metrics."""
-
-        queries = {
-            'locks': "SELECT mode, count(*) FROM pg_locks GROUP BY mode",
-            'buffer_cache': "SELECT * FROM pg_buffercache_summary()",
-            'wal_stats': "SELECT * FROM pg_stat_wal",
-        }
+        """Get available PostgreSQL internal metrics."""
         
         metrics = {}
+        
+        queries = {
+            'locks': "SELECT mode, count(*) FROM pg_locks GROUP BY mode",
+            'wal_stats': "SELECT * FROM pg_stat_wal",
+        }
+
         for name, query in queries.items():
             try:
                 with self.conn.cursor() as cur:
                     cur.execute(query)
                     metrics[name] = cur.fetchall()
-            except:
+            except psycopg.Error as e:
+                print(f"Error getting {name} metrics: {e}")
                 metrics[name] = None
-                
+        
+        metrics['buffer_cache'] = 'Not available'
+        
         return metrics
 
 

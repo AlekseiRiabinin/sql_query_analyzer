@@ -1,7 +1,5 @@
--- Enable the extension in the vtb_db
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
--- Create a view for easier query performance analysis
 CREATE OR REPLACE VIEW public.query_performance AS
 SELECT 
     query,
@@ -23,3 +21,9 @@ SELECT
     blk_write_time
 FROM pg_stat_statements
 ORDER BY mean_exec_time DESC;
+
+GRANT pg_read_all_stats TO postgres;
+GRANT SELECT ON pg_stat_statements TO postgres;
+GRANT SELECT ON pg_stat_activity TO postgres;
+GRANT SELECT ON pg_stats TO postgres;
+GRANT SELECT ON pg_locks TO postgres;
