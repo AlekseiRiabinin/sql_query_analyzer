@@ -323,32 +323,35 @@ class QueryAnalyzer:
         """Main recommendation orchestrator."""
         recs = analysis_result.recommendations
         
-        # Plan-based analysis
         if plan_data.get("Node Type") == "Seq Scan":
             self._analyze_sequential_scan(
-                analysis_result, plan_data, recs
+                plan_data, recs
             )
         
-        self._analyze_cache_efficiency(analysis_result, recs)
+        self._analyze_cache_efficiency(
+            analysis_result, recs
+        )
         
         if plan_data.get("Node Type") == "Sort":
             self._analyze_sort_operation(
                 analysis_result, plan_data, recs
             )
         
-        # Cross-container resource analysis
         self._generate_cross_container_recommendations(
             analysis_result, recs
         )
         
-        # Historical context
-        self._add_historical_context(analysis_result, recs)      
-      
+        self._add_historical_context(
+            analysis_result, recs
+        )      
+    
         self._generate_resource_aware_recommendations(
             analysis_result, recs
         )
         
-        self._add_historical_context(analysis_result, recs)
+        self._add_historical_context(
+            analysis_result, recs
+        )
 
     def _analyze_sequential_scan(
             self: Self,
