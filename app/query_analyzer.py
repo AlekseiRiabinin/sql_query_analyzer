@@ -9,6 +9,7 @@ from typing import Self, Any, Optional
 from dataclasses import dataclass, field
 from pg_feature_extractor import PostgresFeatureExtractor
 from resource_monitor import ContainersResourceMonitor
+from pg_feature_extractor import TableSize
 
 
 @dataclass
@@ -97,8 +98,7 @@ class QueryAnalysisResult:
                 'contains_join': self.contains_join,
                 'contains_sort': self.contains_sort,
                 'contains_aggregate': self.contains_aggregate,
-                'is_read_only': self.is_read_only,
-                'requires_superuser': self.requires_superuser
+                'is_read_only': self.is_read_only
             },
             'recommendations': self.recommendations,
             'historical_context': self.historical_stats,
@@ -139,7 +139,7 @@ class QueryAnalyzer:
         
         if len(sql_query.strip()) > 10000:
             raise ValueError("Query is too long for analysis")
-        
+
         try:
             # Get resource metrics
             all_resources = None
@@ -334,7 +334,7 @@ class QueryAnalyzer:
         
         if plan_data.get("Node Type") == "Sort":
             self._analyze_sort_operation(
-                analysis_result, plan_data, recs
+                analysis_result, recs
             )
         
         self._generate_cross_container_recommendations(
@@ -349,9 +349,6 @@ class QueryAnalyzer:
             analysis_result, recs
         )
         
-        self._add_historical_context(
-            analysis_result, recs
-        )
 
     def _analyze_sequential_scan(
             self: Self,
@@ -362,27 +359,37 @@ class QueryAnalyzer:
 
         table_name = plan_data.get("Relation Name")
         if table_name:
-            table_size = (
+            table_size: Optional[TableSize] = (
                 self.feature_extractor.get_table_size(table_name)
             )
-            if (
-                table_size and 
-                table_size.bytes > 1024 * 1024 * 100  # 100MB threshold
-            ):
+
+        if (
+            table_size and 
+            hasattr(table_size, 'bytes_size') and 
+            table_size.bytes_size > 1024 * 1024 * 100
+        ):
                 filter_condition = plan_data.get(
                     "Filter", "unknown condition"
                 )
+
+                table_size_bytes = getattr(
+                    table_size, 'bytes_size', 0
+                )
+                pretty_size = getattr(
+                    table_size, 'pretty_size', 'unknown size'
+                )
+
                 recs.append({
                     "type": "index",
                     "priority": "HIGH",
                     "message": (
                         f"Sequential scan on large table "
-                        f"'{table_name}' ({table_size.pretty_size}). "
+                        f"'{table_name}' ({pretty_size}). "
                         f"Consider adding an index for condition: "
                         f"{filter_condition}"
                     ),
                     "table_name": table_name,
-                    "table_size_bytes": table_size.bytes
+                    "table_size_bytes": table_size_bytes
                 })
 
     def _analyze_cache_efficiency(
@@ -679,15 +686,16 @@ class QueryAnalyzer:
             current_time - 
             self._cache_timestamps.get(cache_key, 0)
         )
-        # Check cache first
+
         if (
             cache_key in self._historical_cache and 
             time_diff < self.cache_ttl
         ):
             return self._historical_cache[cache_key]
         
-        # Not in cache or expired, query the database
-        historical_stats = self._get_historical_query_stats(sql_query)
+        historical_stats = self._get_historical_query_stats(
+            sql_query
+        )
         
         if historical_stats:
             self._historical_cache[cache_key] = historical_stats
@@ -701,7 +709,10 @@ class QueryAnalyzer:
             timeout_seconds: int = 10
     ) -> Optional[dict[str, Any]]:
         """Get execution plan with timeout protection."""
-
+        
+        if not self._is_valid_sql_query(sql_query):
+            raise ValueError("Invalid SQL query")
+        
         try:
             with self.conn.cursor() as cur:
                 cur.execute(
@@ -724,6 +735,50 @@ class QueryAnalyzer:
                 )
                 return None
             raise
+
+    def _is_valid_sql_query(self: Self, sql_query: str) -> bool:
+        """Basic validation to prevent SQL injection."""
+        
+        if not sql_query or len(sql_query.strip()) == 0:
+            return False
+        
+        if len(sql_query) > 10000:
+            return False
+        
+        suspicious_patterns = [
+            ';', '--', '/*', '*/', 'xp_', 'exec(', 'union select',
+            'insert into', 'update ', 'delete from', 'drop table',
+            'create table', 'alter table'
+        ]
+        
+        query_lower = sql_query.lower()
+        
+        # Allow only SELECT-like queries for analysis
+        if not query_lower.strip().startswith((
+            'select', 'with', 'explain'
+        )):
+            return False
+        
+        for pattern in suspicious_patterns:
+            if pattern in query_lower:
+                return False
+        
+        allowed_keywords = [
+            'select', 'from', 'where', 'join', 'group by', 
+            'order by', 'limit', 'offset', 'with'
+        ]
+        
+        words = query_lower.split()
+        unusual_words = [
+            word for word in words if word 
+            not in allowed_keywords and
+            not word.replace('_', '').isalnum()
+        ]
+        
+        if len(unusual_words) > 10:
+            return False
+        
+        return True
 
     def _classify_query_type(
             self: Self,

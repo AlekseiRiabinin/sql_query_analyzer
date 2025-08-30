@@ -3,6 +3,7 @@ services:
     build: 
       context: ./postgres
       dockerfile: Dockerfile
+    image: alexflames77/custom-postgres-17:latest
     container_name: vtb_postgres
     ports:
       - "${POSTGRES_PORT}:5432"
@@ -21,6 +22,7 @@ services:
     build: 
       context: ./app
       dockerfile: Dockerfile
+    image: alexflames77/sql_analyzer:latest
     container_name: vtb_api
     environment:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
