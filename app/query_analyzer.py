@@ -152,6 +152,7 @@ class QueryAnalyzer:
                         )
                     else:
                         all_resources = None
+
                 except Exception as resource_error:
                     print(
                         f"Warning: Could not get container "
@@ -204,6 +205,20 @@ class QueryAnalyzer:
                     f"internal metrics: {metrics_error}"
                 )
 
+
+            # Get system metrics for CPU prediction
+            system_metrics = None
+            if all_resources:
+                system_metrics = all_resources.get('system', {})
+
+            # Predict memory and CPU usage
+            predicted_memory = self._predict_memory_bytes(
+                plan_data, postgres_metrics
+            )
+            predicted_cpu = self._predict_cpu_seconds(
+                plan_data, system_metrics
+            )
+
             # Create analysis result with all collected data
             analysis_result = QueryAnalysisResult(
                 query=sql_query,
@@ -223,8 +238,8 @@ class QueryAnalyzer:
                 actual_loops=plan_data.get("Actual Loops"),
                 planning_time=plan_data.get("Planning Time"),
                 execution_time=plan_data.get("Execution Time"),
-                predicted_memory_bytes=None,
-                predicted_cpu_seconds=None,
+                predicted_memory_bytes=predicted_memory,
+                predicted_cpu_seconds=predicted_cpu,
                 query_type=None,
                 contains_join=False,
                 contains_sort=False,
@@ -253,6 +268,218 @@ class QueryAnalyzer:
             raise psycopg.Error(
                 f"Unexpected error during query analysis: {e}"
             ) from e
+
+    def _predict_memory_bytes(
+        self: Self,
+        plan_data: dict[str, Any],
+        postgres_metrics: Optional[dict[str, Any]]
+    ) -> Optional[int]:
+        """Estimate memory usage based on execution plan."""
+
+        try:
+            base_memory = 1024 * 1024  # 1MB base
+            
+            plan_rows = plan_data.get("Plan Rows", 0)
+            plan_width = plan_data.get("Plan Width", 0)
+
+            # bytes for row processing
+            row_memory = plan_rows * plan_width
+            
+            # Memory for operations
+            operation_memory = 0
+            node_type = plan_data.get("Node Type", "")
+            
+            if node_type == "Sort":  # 2x for sort overhead
+                operation_memory = plan_rows * plan_width * 2
+                
+            elif node_type == "Hash":  # 3x for hash tables
+                operation_memory = plan_rows * plan_width * 3
+                
+            elif node_type == "Aggregate":  # 1.5x for aggregation
+                operation_memory = plan_rows * plan_width * 1.5
+                
+            total_memory = base_memory + row_memory + operation_memory
+            
+            if (
+                postgres_metrics and 
+                'available_memory' in postgres_metrics
+            ):
+                total_memory = min(
+                    total_memory,
+                    postgres_metrics['available_memory'] * 0.8
+                )
+
+            return int(total_memory)
+            
+        except (TypeError, ValueError):
+            return None
+
+    def _predict_cpu_seconds(
+        self: Self,
+        plan_data: dict[str, Any],
+        system_metrics: Optional[dict[str, Any]]
+    ) -> Optional[float]:
+        """Estimate CPU time based on execution plan and system."""
+        try:
+            base_cpu = 0.001  # 1ms base overhead
+            
+            total_cost = plan_data.get("Total Cost", 0)
+            
+            # Convert PostgreSQL cost units to seconds
+            cost_to_cpu_factor = 0.0001
+            
+            # Operation complexity
+            complexity_factor = 1.0
+            node_type = plan_data.get("Node Type", "")
+
+            if node_type == "Seq Scan":
+                complexity_factor = 1.0
+
+            elif node_type == "Index Scan":
+                complexity_factor = 0.7
+
+            elif node_type == "Nested Loop":
+                complexity_factor = 1.5
+
+            elif node_type == "Hash Join":
+                complexity_factor = 2.0
+
+            elif node_type == "Sort":
+                complexity_factor = 2.5
+
+            elif node_type == "Aggregate":
+                complexity_factor = 1.8
+
+            # System load if available
+            load_factor = 1.0
+            if system_metrics:
+                load_1min = None
+                
+                # Case 1: Direct load_average dictionary
+                if (
+                    'load_average' in system_metrics and 
+                    isinstance(system_metrics['load_average'], dict)
+                ):
+                    load_1min = (
+                        system_metrics['load_average'].get('1min')
+                    )
+                
+                # Case 2: Direct load_1min value
+                elif 'load_1min' in system_metrics:
+                    load_1min = system_metrics['load_1min']
+
+                # Case 3: System metrics might have cpu load info
+                elif (
+                    'cpu' in system_metrics and 
+                    isinstance(system_metrics['cpu'], dict)
+                ):
+                    cpu_metrics = system_metrics['cpu']
+
+                    if 'load_1min' in cpu_metrics:
+                        load_1min = cpu_metrics['load_1min']
+
+                    elif (
+                        'load_average' in cpu_metrics 
+                        and isinstance(
+                            cpu_metrics['load_average'], dict
+                        )
+                    ):
+                        load_1min = (
+                            cpu_metrics['load_average'].get('1min')
+                        )
+
+                if (
+                    load_1min is not None and 
+                    isinstance(load_1min, (int, float)) and 
+                    load_1min > 0
+                ):
+                    load_factor = max(1.0, load_1min * 0.5)
+                    
+            estimated_cpu = base_cpu + (
+                total_cost * 
+                cost_to_cpu_factor * 
+                complexity_factor * 
+                load_factor
+            )
+            
+            return round(estimated_cpu, 4)
+            
+        except (TypeError, ValueError):
+            return None
+
+    def _add_resource_prediction_recommendations(
+        self: Self,
+        analysis_result: QueryAnalysisResult,
+        recs: list[dict[str, Any]]
+    ) -> None:
+        """Recommendations based on predicted memory and CPU."""
+        
+        if analysis_result.predicted_memory_bytes:
+            memory_mb = (
+                analysis_result.predicted_memory_bytes
+                / (1024 * 1024)
+            )
+            
+            if memory_mb > 10:  # More than 10MB
+                recs.append({
+                    "type": "memory",
+                    "priority": "MEDIUM",
+                    "message": (
+                        f"Query predicted to use "
+                        f"{memory_mb:.1f}MB memory. "
+                        f"Consider optimizing with smaller "
+                        f"batches or indexes."
+                    ),
+                    "predicted_memory_mb": memory_mb
+                })
+
+            if memory_mb > 50:  # More than 50MB
+                recs.append({
+                    "type": "memory",
+                    "priority": "HIGH",
+                    "message": (
+                        f"High memory usage predicted "
+                        f"({memory_mb:.1f}MB). "
+                        f"This may impact other queries. "
+                        f"Consider increasing "
+                        f"work_mem or optimizing query structure."
+                    ),
+                    "predicted_memory_mb": memory_mb
+                })
+        
+        if analysis_result.predicted_cpu_seconds:
+            cpu_ms = (
+                analysis_result.predicted_cpu_seconds
+                * 1000
+            )
+
+            if cpu_ms > 100:  # More than 100ms
+                recs.append({
+                    "type": "cpu",
+                    "priority": "MEDIUM",
+                    "message": (
+                        f"Query predicted to use "
+                        f"{cpu_ms:.0f}ms CPU time. "
+                        f"Consider optimizing with "
+                        f"better indexes or "
+                        f"simplifying complex operations."
+                    ),
+                    "predicted_cpu_ms": cpu_ms
+                })
+
+            if cpu_ms > 500:  # More than 500ms
+                recs.append({
+                    "type": "cpu",
+                    "priority": "HIGH",
+                    "message": (
+                        f"High CPU usage predicted "
+                        f"({cpu_ms:.0f}ms). "
+                        f"This may impact system performance. "
+                        f"Consider running during off-peak hours "
+                        f"or optimizing further."
+                    ),
+                    "predicted_cpu_ms": cpu_ms
+                })
 
     def _get_resource_monitor(self: Self) -> ContainersResourceMonitor:
         """Lazy initialization of ContainersResourceMonitor."""
@@ -348,7 +575,10 @@ class QueryAnalyzer:
         self._generate_resource_aware_recommendations(
             analysis_result, recs
         )
-        
+
+        self._add_resource_prediction_recommendations(
+            analysis_result, recs
+        )
 
     def _analyze_sequential_scan(
             self: Self,
@@ -362,6 +592,31 @@ class QueryAnalyzer:
             table_size: Optional[TableSize] = (
                 self.feature_extractor.get_table_size(table_name)
             )
+
+        # Check for filter condition
+        filter_condition = plan_data.get("Filter")
+        has_filter = (
+            filter_condition and filter_condition != "true"
+        )
+
+        if has_filter and table_name:
+            recs.append({
+                "type": "index",
+                "priority": (
+                    "LOW" if 
+                        not table_size or 
+                        table_size.bytes_size < 10 * 1024 * 1024 
+                    else "MEDIUM"
+                ),
+                "message": (
+                    f"Sequential scan with filter "
+                    f"on table '{table_name}'. "
+                    f"Consider adding an index for "
+                    f"condition: {filter_condition}"
+                ),
+                "table_name": table_name,
+                "filter_condition": filter_condition
+            })
 
         if (
             table_size and 
@@ -462,16 +717,28 @@ class QueryAnalyzer:
         app_metrics = container_resources.get(
             'application_container', {}
         )
+        if not isinstance(app_metrics, dict):
+            app_metrics = {}
+
         pg_metrics = container_resources.get(
             'postgres_container', {}
         )
+        if not isinstance(pg_metrics, dict):
+            pg_metrics = {}
 
         pg_internal = analysis_result.postgres_metrics or {}
         
         # PostgreSQL Container Memory Pressure
+        pg_memory = pg_metrics.get('memory', {})
+
+        if not isinstance(pg_memory, dict):
+            pg_memory = {}
+
         pg_memory_percent = (
-            pg_metrics.get('memory', {}).get('percent_used', 0)
+            pg_memory.get('percent_used', 0) 
+            if isinstance(pg_memory, dict) else 0
         )
+
         if pg_memory_percent > 85:
             recs.append({
                 "type": "resource",
@@ -488,9 +755,16 @@ class QueryAnalyzer:
             })
         
         # PostgreSQL Container CPU Usage
+        pg_cpu = pg_metrics.get('cpu', {})
+
+        if not isinstance(pg_cpu, dict):
+            pg_cpu = {}
+
         pg_cpu_percent = (
-            pg_metrics.get('cpu', {}).get('percent_used', 0)
+            pg_cpu.get('percent_used', 0) 
+            if isinstance(pg_cpu, dict) else 0
         )
+
         cpu_intensive_ops = [
             "Hash Join", "Sort", "Aggregate", "Hash", "WindowAgg"
         ]
@@ -514,9 +788,16 @@ class QueryAnalyzer:
             })
 
         # Disk I/O Pressure Detection
+        pg_disk_io = pg_metrics.get('disk_io', {})
+
+        if not isinstance(pg_disk_io, dict):
+            pg_disk_io = {}
+
         pg_disk_write = (
-            pg_metrics.get('disk_io', {}).get('write_bytes', 0)
+            pg_disk_io.get('write_bytes', 0) 
+            if isinstance(pg_disk_io, dict) else 0
         )
+
         if pg_disk_write > 50 * 1024 * 1024:  # 50MB/s write threshold
             recs.append({
                 "type": "io",
@@ -532,9 +813,16 @@ class QueryAnalyzer:
             })
         
         # Application Container Memory Pressure
+        app_memory = app_metrics.get('memory', {})
+
+        if not isinstance(app_memory, dict):
+            app_memory = {}
+
         app_memory_percent = (
-            app_metrics.get('memory', {}).get('percent_used', 0)
+            app_memory.get('percent_used', 0) 
+            if isinstance(app_memory, dict) else 0
         )
+
         if (
             app_memory_percent > 90 and 
             analysis_result.plan_rows > 10000
@@ -581,7 +869,11 @@ class QueryAnalyzer:
             })
 
         # disk IOPS
-        pg_disk_iops = pg_metrics.get('disk_io', {}).get('iops', 0)
+        pg_disk_iops = (
+            pg_disk_io.get('iops', 0) 
+            if isinstance(pg_disk_io, dict) else 0
+        )
+
         if pg_disk_iops > 1000:
             recs.append({
                 "type": "io",
@@ -606,17 +898,36 @@ class QueryAnalyzer:
         if not container_resources:
             return
             
-        app_metrics = (
-            analysis_result.container_resources.get(
-                'application_container', {}
-            )
+        app_metrics = analysis_result.container_resources.get(
+            'application_container', {}
         )
-        app_memory_pressure = (
-            app_metrics.get('memory', {}).get('percent_used', 0) > 80
+        if not isinstance(app_metrics, dict):
+            app_metrics = {}
+
+        # Memory metrics
+        app_memory = app_metrics.get('memory', {})
+
+        if not isinstance(app_memory, dict):
+            app_memory = {}
+
+        app_memory_percent = (
+            app_memory.get('percent_used', 0) 
+            if isinstance(app_memory, dict) else 0
         )
-        app_high_cpu = (
-            app_metrics.get('cpu', {}).get('percent_used', 0) > 70
+
+        # CPU metrics
+        app_cpu = app_metrics.get('cpu', {})
+
+        if not isinstance(app_cpu, dict):
+            app_cpu = {}
+
+        app_cpu_percent = (
+            app_cpu.get('percent_used', 0) 
+            if isinstance(app_cpu, dict) else 0
         )
+
+        app_memory_pressure = app_memory_percent > 80
+        app_high_cpu = app_cpu_percent > 70
 
         if (
             app_memory_pressure and 

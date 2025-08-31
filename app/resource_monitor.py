@@ -8,7 +8,7 @@ import docker
 from docker import errors
 from typing import (
     Self, Any, Optional,
-    TypedDict, NotRequired, cast
+    TypedDict, NotRequired
 )
 from dataclasses import dataclass
 
