@@ -34,6 +34,7 @@ A sophisticated performance analysis tool for PostgreSQL queries that combines e
 
 ## 🏗️ Project Structure
 
+```
 sql_query-analyzer/
 ├── docker-compose.yml
 ├── postgres/
@@ -52,6 +53,7 @@ sql_query-analyzer/
 ├── .env
 └── README.md
 
+```
 ## ⚙️ Teck stack
 - Python 3.12
 - PostgreSQL 17.5
@@ -179,8 +181,8 @@ curl -X POST "http://localhost:8000/analyze?query=SELECT+*+FROM+employees&includ
         "execution_time": null
     },
     "resource_metrics": {
-        "container_resources": {...},
-        "postgres_metrics": {...},
+        "container_resources": {....},
+        "postgres_metrics": {....},
         "predicted_memory_bytes": 1116576,
         "predicted_cpu_seconds": 0.0219
     },
@@ -191,9 +193,9 @@ curl -X POST "http://localhost:8000/analyze?query=SELECT+*+FROM+employees&includ
         "contains_aggregate": false,
         "is_read_only": true
     },
-    "recommendations": [...],
+    "recommendations": [....],
     "historical_context": null,
-    "execution_plan": [...],
+    "execution_plan": [....],
     "timestamp": "2025-08-31T11:26:55.139418",
     "should_reject": false
 }
