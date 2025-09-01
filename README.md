@@ -43,7 +43,7 @@ sql_query-analyzer/
 │ └── init-vtb-db.sql
 ├── app/
 │ ├── Dockerfile
-│ ├── \_\_init\_\_.py
+│ ├── __init__.py
 │ ├── main.py
 │ ├── database.py
 │ ├── query_analyzer.py
@@ -181,8 +181,8 @@ curl -X POST "http://localhost:8000/analyze?query=SELECT+*+FROM+employees&includ
         "execution_time": null
     },
     "resource_metrics": {
-        "container_resources": {....},
-        "postgres_metrics": {....},
+        "container_resources": {  },
+        "postgres_metrics": {  },
         "predicted_memory_bytes": 1116576,
         "predicted_cpu_seconds": 0.0219
     },
@@ -193,9 +193,9 @@ curl -X POST "http://localhost:8000/analyze?query=SELECT+*+FROM+employees&includ
         "contains_aggregate": false,
         "is_read_only": true
     },
-    "recommendations": [....],
+    "recommendations": [  ],
     "historical_context": null,
-    "execution_plan": [....],
+    "execution_plan": [  ],
     "timestamp": "2025-08-31T11:26:55.139418",
     "should_reject": false
 }
@@ -248,13 +248,13 @@ GET /stats/system - Get current system resource usage
             "limit_bytes": 15975219200,
             "percent_used": 0.29
         },
-        "network": {...},
-        "disk_io": {...},
+        "network": {  },
+        "disk_io": {  },
         "status": "unknown",
         "container_id": "bb54b17ca492",
         "container_type": "API Container"
         },
-        "postgres_container": {...},
+        "postgres_container": {  },
         "timestamp": 1756639615.057929,
         "system_wide": {
         "load_average": {
