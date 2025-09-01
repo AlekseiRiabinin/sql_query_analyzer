@@ -1,16 +1,77 @@
 """Main module running FastAPI app."""
 
 
+import os
+import logging
 import psycopg
 import datetime
+from logging.config import dictConfig
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Request, Depends, Query
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from typing import Generator, Optional
+from typing import Optional, Generator, AsyncGenerator
 from database import get_db
 from query_analyzer import QueryAnalyzer
+from middleware import ResponseLoggingMiddleware
 
+
+os.makedirs("/app/logs", exist_ok=True)
+
+
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard',
+            'stream': 'ext://sys.stdout'
+        },
+        'file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'formatter': 'standard',
+            'filename': '/app/logs/query_analyzer.log',
+            'maxBytes': 10485760,
+            'backupCount': 5,
+            'encoding': 'utf-8'
+        }
+    },
+    'loggers': {
+        '': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': True
+        },
+        'uvicorn': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False
+        },
+        'uvicorn.access': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False
+        },
+        'uvicorn.error': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False
+        }
+    }
+}
+
+dictConfig(LOGGING_CONFIG)
+
+logger = logging.getLogger(__name__)
+logger.info("Application logging configured successfully")
 
 app = FastAPI(
     title="Query Analysis API",
@@ -20,6 +81,16 @@ app = FastAPI(
         f"performance with PostgreSQL"
     )
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(ResponseLoggingMiddleware)
 
 
 def get_connection() -> Generator[psycopg.Connection, None, None]:
@@ -43,6 +114,7 @@ def get_query_analyzer(
 async def root():
     """Root endpoint with API information."""
 
+    logger.info("Root endpoint accessed")
     return {
         "message": "Query Analysis API",
         "version": "1.0.0",
@@ -60,6 +132,7 @@ async def health_check(
 ):
     """Health check endpoint."""
 
+    logger.info("Health check endpoint accessed")
     try:
         with analyzer.conn.cursor() as cur:
             cur.execute("SELECT 1")
@@ -67,7 +140,12 @@ async def health_check(
         
         resource_monitor = analyzer._get_resource_monitor()
         monitor_healthy = resource_monitor is not None
-        
+
+        logger.info(
+            f"Health check completed - DB: {db_healthy}, "
+            f"Monitor: {monitor_healthy}"
+        )
+
         return {
             "status": "healthy",
             "database": (
@@ -84,6 +162,7 @@ async def health_check(
         }
         
     except Exception as e:
+        logger.error(f"Health check failed: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Health check failed: {e}"
@@ -112,19 +191,26 @@ async def analyze_query(
 ) -> dict:
     """Analyze SQL query and give performance recommendations."""
 
+    logger.info(
+        f"Analyze query request received: "
+        f"{query[:100]}..."
+    )
+
     try:
         if not query or not query.strip():
+            logger.warning("Empty query received")
             raise HTTPException(
                 status_code=400,
                 detail="Query cannot be empty"
             )
         
         if len(query.strip()) > 10000:
+            logger.warning("Query too long for analysis")
             raise HTTPException(
                 status_code=400,
                 detail="Query is too long for analysis"
             )
-        
+
         analysis_result = analyzer.analyze_query(
             sql_query=query,
             include_resources=include_resources,
@@ -144,12 +230,20 @@ async def analyze_query(
                 f"exceeds threshold {max_cost_threshold}"
             )
 
+        logger.info(
+            f"Query analysis completed - "
+            f"Cost: {analysis_result.total_cost}, "
+            f"Reject: {should_reject}"
+        )
+
         return result_dict
-        
+
     except ValueError as e:
+        logger.error(f"Value error in query analysis: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
     except psycopg.Error as e:
+        logger.error(f"Database error in query analysis: {e}")
         if "statement timeout" in str(e):
             raise HTTPException(
                 status_code=408, 
@@ -163,6 +257,7 @@ async def analyze_query(
         )
 
     except Exception as e:
+        logger.error(f"Unexpected error in query analysis: {e}")
         raise HTTPException(
             status_code=500, detail=f"Analysis failed: {e}"
         )
@@ -182,11 +277,22 @@ async def get_historical_stats(
 ) -> dict:
     """Get historical query performance statistics."""
 
+    logger.info(
+        f"Historical stats request - "
+        f"Pattern: {query_pattern}, Limit: {limit}"
+    )
+
     try:
         if query_pattern:
             stats = analyzer._get_historical_query_stats(
                 query_pattern
             )
+
+            logger.info(
+                f"Historical stats found for pattern: "
+                f"{query_pattern}"
+            )
+
             return {
                 "query_pattern": query_pattern,
                 "stats": stats
@@ -209,10 +315,18 @@ async def get_historical_stats(
                         "total_exec_time": float(row[2]),
                         "mean_exec_time": float(row[3])
                     })
-                
+
+                logger.info(
+                    f"Returning top {len(queries)} "
+                    f"queries by execution time"
+                )
+
                 return {"top_queries": queries}
                 
     except Exception as e:
+        logger.error(
+            f"Failed to get historical stats: {e}"
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get historical stats: {e}"
@@ -225,15 +339,21 @@ async def get_system_stats(
 ) -> dict:
     """Get current system resource statistics."""
 
+    logger.info("System stats request received")
+
     try:
         monitor = analyzer._get_resource_monitor()
         if not monitor:
+            logger.warning("Resource monitor not available")
+
             return {
                 "available": False,
                 "message": "Resource monitor not available"
             }
 
         resources = monitor.get_all_container_resources()
+        logger.info("System stats retrieved successfully")
+
         return {
             "available": True,
             "resources": resources,
@@ -241,6 +361,7 @@ async def get_system_stats(
         }
         
     except Exception as e:
+        logger.error(f"Failed to get system stats: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get system stats: {e}"
@@ -253,9 +374,13 @@ async def clear_cache(
 ) -> dict:
     """Clear the query analysis cache."""
 
+    logger.info("Cache clear request received")
+
     try:
         analyzer._historical_cache.clear()
         analyzer._cache_timestamps.clear()
+        logger.info("Cache cleared successfully")
+
         return {
             "message": "Cache cleared successfully",
             "cache_size": 0,
@@ -263,6 +388,7 @@ async def clear_cache(
         }
 
     except Exception as e:
+        logger.error(f"Failed to clear cache: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to clear cache: {e}"
@@ -275,15 +401,46 @@ async def get_cache_stats(
 ) -> dict:
     """Get cache statistics."""
 
+    logger.info("Cache stats request received")
+
     return {
         "cache_size": len(analyzer._historical_cache),
         "cache_ttl": analyzer.cache_ttl,
         "timestamp": datetime.now().isoformat()
     }
 
+@app.get("/test-logging")
+async def test_logging():
+    """Test if logging is working properly."""
+
+    logger.info(
+        "Test log message from /test-logging endpoint"
+    )
+    
+    logger.debug(
+        f"Debug message - should not appear "
+        f"in file if level is INFO"
+    )
+    logger.info("Info message - should appear in file")
+    logger.warning(
+        "Warning message - should appear in file"
+    )
+    logger.error("Error message - should appear in file")
+    
+    return {
+        "message": "Log test completed",
+        "log_file": "/app/logs/query_analyzer.log"
+    }
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
+async def general_exception_handler(
+    request: Request,
+    exc: Exception
+) -> JSONResponse:
+    """Exception handler for unhandled exceptions."""
+
+    logger.error(f"Unhandled exception: {exc}")
+
     return JSONResponse(
         status_code=500,
         content={
@@ -294,22 +451,28 @@ async def general_exception_handler(request, exc):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(
+    app: FastAPI
+) -> AsyncGenerator[None, None]:
+    """Async context manager for lifecycle events.."""
+
+    logger.info("Application startup initiated")
+
     try:
         conn = get_db()
         with conn.cursor() as cur:
             cur.execute("SELECT version()")
             version = cur.fetchone()[0]
         conn.close()
-        print(f"Connected to PostgreSQL: {version}")
+        logger.info(f"Connected to PostgreSQL: {version}")
 
     except Exception as e:
-        print(f"Database connection failed: {e}")
+        logger.error(f"Database connection failed: {e}")
         raise
     
-    yield
+    yield  # Application runs here
     
-    print("Shutting down Query Analysis API")
+    logger.info("Shutting down Query Analysis API")
 
 
 app.router.lifespan_context = lifespan
@@ -317,6 +480,7 @@ app.router.lifespan_context = lifespan
 
 if __name__ == "__main__":
     import uvicorn
+    logger.info("Starting Uvicorn server")
     uvicorn.run(
         app, 
         host="0.0.0.0", 

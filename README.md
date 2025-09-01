@@ -38,17 +38,18 @@ A sophisticated performance analysis tool for PostgreSQL queries that combines e
 sql_query-analyzer/
 ├── docker-compose.yml
 ├── postgres/
-│ ├── Dockerfile
-│ ├── init-pg-stat.sql
-│ └── init-vtb-db.sql
+│   ├── init-pg-stat.sql
+│   └── init-vtb-db.sql
 ├── app/
-│ ├── Dockerfile
-│ ├── __init__.py
-│ ├── main.py
-│ ├── database.py
-│ ├── query_analyzer.py
-│ ├── pg_feature_extractor.py
-│ ├── resource_monitor.py
+│   ├── Dockerfile
+│   ├── __init__.py
+│   ├── main.py
+│   ├── middleware.py
+│   ├── database.py
+│   ├── query_analyzer.py
+│   ├── pg_feature_extractor.py
+│   ├── resource_monitor.py
+├── logs/    
 ├── requirements.txt
 ├── .env
 └── README.md
@@ -92,7 +93,7 @@ curl http://localhost:8000
 ## 🐘 Generate data
 ```sql
 -- Example table with ~1,000 rows
-CREATE TABLE employees (
+CREATE TABLE vtb_db.public.employees (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     department TEXT NOT NULL,
@@ -101,7 +102,7 @@ CREATE TABLE employees (
 );
 
 -- Insert dummy data
-INSERT INTO employees (name, department, salary)
+INSERT INTO vtb_db.public.employees (name, department, salary)
 SELECT
     'Employee_' || g,
     CASE WHEN g % 5 = 0 THEN 'Engineering'
@@ -292,3 +293,14 @@ GET /cache/stats - Get cache statistics
     "timestamp": "2024-01-15T10:30:00.000000"
 }
 ```
+
+##  References
+1. Mason, K. et al. (2018). Predicting host CPU utilization in the cloud using evolutionary neural networks. Future Generation Computer Systems.
+
+2. Liu, X. (2024). Towards CPU Performance Prediction: New Challenge Benchmark Dataset and Novel Approach.
+
+3. Gunther, N. Analyzing Computer Performance with Perl::PDQ.
+
+4. Sites, R. Understanding Software Dynamics.
+
+5. Gregg, B. Systems Performance: Enterprise and the Cloud.
