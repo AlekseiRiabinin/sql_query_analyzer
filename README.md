@@ -36,6 +36,9 @@ A sophisticated performance analysis tool for PostgreSQL queries that combines e
 
 ```
 sql_query-analyzer/
+├── .github/
+│   └── workflows/
+│       └── ci-cd.yml 
 ├── docker-compose.yml
 ├── postgres/
 │   ├── init-pg-stat.sql
@@ -202,74 +205,7 @@ curl -X POST "http://localhost:8000/analyze?query=SELECT+*+FROM+employees&includ
 }
 ```
 
-4. **Historical Statistics**
-```bash
-GET /stats/historical - Get historical query performance data
-```
-
-*Parameters:*
-
-- `query_pattern` (optional): Query pattern to match
-
-- `limit` (optional, default=10): Number of results to return
-
-
-```json
-{
-    "query_pattern": "SELECT",
-    "stats": {
-        "query": "SELECT * FROM employees WHERE department = $1",
-        "calls": 150,
-        "total_exec_time": 1250.5,
-        "mean_exec_time": 8.34,
-        "rows": 15000,
-        "shared_blks_hit": 12000,
-        "shared_blks_read": 300,
-        "cache_hit_ratio": 97.56
-    }
-}
-```
-
-5. **System Statistics**
-```bash
-GET /stats/system - Get current system resource usage
-```
-
-```json
-{
-    "available": true,
-    "resources": {
-        "application_container": {
-        "cpu": {
-            "percent_used": 0.0,
-            "cores_available": 8
-        },
-        "memory": {
-            "used_bytes": 46215168,
-            "limit_bytes": 15975219200,
-            "percent_used": 0.29
-        },
-        "network": {  },
-        "disk_io": {  },
-        "status": "unknown",
-        "container_id": "bb54b17ca492",
-        "container_type": "API Container"
-        },
-        "postgres_container": {  },
-        "timestamp": 1756639615.057929,
-        "system_wide": {
-        "load_average": {
-            "1min": 0.84326171875,
-            "5min": 0.57568359375,
-            "15min": 0.35009765625
-        }
-        }
-    },
-    "timestamp": "2024-01-15T10:30:00.000000"
-}
-```
-
-6. **Cache Management**
+4. **Cache Management**
 ```bash
 GET /cache/clear - Clear query analysis cache
 ```
@@ -293,6 +229,60 @@ GET /cache/stats - Get cache statistics
     "timestamp": "2024-01-15T10:30:00.000000"
 }
 ```
+
+## 📝 Logging & Monitoring
+
+The application includes comprehensive logging middleware that automatically captures and logs detailed performance metrics for all query analysis requests. The logging system:
+Features:
+
+- **Automatic Response Logging:** Captures analysis results from `/analyze` endpoint
+
+- **Structured Logging:** Logs key performance metrics including:
+
+  - Query text and timestamp
+
+  - Execution plan details (cost, node type, relation names)
+
+  - Buffer cache statistics and hit ratios
+
+  - Optimization recommendations
+
+  - Resource predictions (memory, CPU)
+
+- **Debug-Level Details:** Additional debug information including:
+
+  - Query characteristics (joins, sorts, aggregates)
+
+  - Container resource utilization
+
+  - Execution plan startup costs and filter conditions
+
+- **Error Handling:** Robust exception handling with meaningful error messages
+
+*Example:*
+
+```
+INFO: Analysis Request: http://localhost:8000/analyze
+INFO: Query: SELECT * FROM employees WHERE department = 'Engineering'...
+INFO: Timestamp: 2025-09-02T14:26:21.534385
+INFO: Total Cost: 323.66
+INFO: Node Type: Sort
+INFO: Relation: employees
+INFO: Plan Rows: 2000
+INFO: Buffer Hits: 0 | Reads: 0
+INFO: Optimization Recommendations: 0
+```
+
+*Configuration:*
+
+- Logs are written to both console and file storage
+
+- Debug logging can be enabled for detailed technical information
+
+- Log files are persisted in the `app_logs` Docker volume
+
+- Middleware automatically handles JSON parsing and error scenarios
+
 
 ##  References
 1. Mason, K. et al. (2018). Predicting host CPU utilization in the cloud using evolutionary neural networks. Future Generation Computer Systems.

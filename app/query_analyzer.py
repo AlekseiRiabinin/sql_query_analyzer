@@ -1,9 +1,8 @@
 """Analyzer of SQL queries."""
 
 
-import psycopg
 import time
-import hashlib
+import psycopg
 from datetime import datetime
 from typing import Self, Any, Optional
 from dataclasses import dataclass, field
@@ -165,8 +164,12 @@ class QueryAnalyzer:
             if include_historical:
                 historical_stats = (
                     self._get_historical_query_stats_with_cache(
-                        sql_query
+                        sql_query, limit=1
                     )
+                )
+                historical_stats = (
+                    historical_stats[0] 
+                    if historical_stats else None
                 )
             
             # Get execution plan with timeout protection
@@ -175,7 +178,7 @@ class QueryAnalyzer:
                     sql_query, timeout_seconds=10
                 )
             )
-            
+
             if not execution_plan:
                 raise psycopg.Error(
                     "Failed to get execution plan for query"
@@ -363,7 +366,7 @@ class QueryAnalyzer:
                     load_1min = (
                         system_metrics['load_average'].get('1min')
                     )
-                
+
                 # Case 2: Direct load_1min value
                 elif 'load_1min' in system_metrics:
                     load_1min = system_metrics['load_1min']
@@ -493,12 +496,14 @@ class QueryAnalyzer:
 
     def _get_historical_query_stats(
             self: Self,
-            sql_query: str
-    ) -> Optional[dict[str, Any]]:
+            sql_query: str,
+            limit: int = 1
+    ) -> Optional[list[dict[str, Any]]]:
         """Get historical performance data for similar queries."""
+
         try:
-            normalized_pattern = (  # simplified version
-                self._normalize_query_pattern(sql_query)
+            normalized_pattern = self._normalize_query_pattern(
+                sql_query
             )
             
             with self.conn.cursor() as cur:
@@ -510,37 +515,49 @@ class QueryAnalyzer:
                             shared_blks_hit + shared_blks_read, 0)
                         ) as cache_hit_ratio
                     FROM pg_stat_statements 
-                    WHERE query LIKE %s
-                    ORDER BY mean_exec_time DESC 
-                    LIMIT 1
+                    WHERE query ILIKE %s
+                    ORDER BY total_exec_time DESC 
+                    LIMIT %s
                 """
-                cur.execute(query, (f"%{normalized_pattern}%",))
-                result = cur.fetchone()
+                search_pattern = f"%{normalized_pattern}%"
+                cur.execute(query, (search_pattern, limit))
+                results = cur.fetchall()
                 
-                if result:
-                    return {
-                        "query": result[0],
-                        "calls": result[1],
-                        "total_exec_time": result[2],
-                        "mean_exec_time": result[3],
-                        "rows": result[4],
-                        "shared_blks_hit": result[5],
-                        "shared_blks_read": result[6],
-                        "cache_hit_ratio": result[7]
-                    }
+                if results:
+                    stats_list = []
+                    for row in results:
+                        stats_list.append({
+                            "query": row[0],
+                            "calls": row[1],
+                            "total_exec_time": row[2],
+                            "mean_exec_time": row[3],
+                            "rows": row[4],
+                            "shared_blks_hit": row[5],
+                            "shared_blks_read": row[6],
+                            "cache_hit_ratio": row[7]
+                        })
+                    return stats_list
+                else:
+                    return None
 
         except psycopg.Error:
-            pass
-        return None
+            return None
 
     def _normalize_query_pattern(
-            self: Self,
-            sql_query: str
+        self: Self,
+        sql_query: str
     ) -> str:
-        """Create a simplified pattern for query matching."""
+        """Create a pattern for matching queries."""
 
-        normalized = ' '.join(sql_query.split()).lower()
-        return hashlib.md5(normalized.encode()).hexdigest()
+        cleaned_query = ' '.join(sql_query.split()).lower()  
+        words = cleaned_query.split()
+
+        if len(words) > 3:
+            pattern = ' '.join(words[:4]) + '%'
+        else:
+            pattern = cleaned_query + '%'
+        
+        return pattern
 
     def _generate_recommendations(
             self: Self,
@@ -548,6 +565,7 @@ class QueryAnalyzer:
             plan_data: dict[str, Any]
     ) -> None:
         """Main recommendation orchestrator."""
+
         recs = analysis_result.recommendations
         
         if plan_data.get("Node Type") == "Seq Scan":
@@ -986,13 +1004,16 @@ class QueryAnalyzer:
 
     def _get_historical_query_stats_with_cache(
             self: Self,
-            sql_query: str
-    ) -> Optional[dict[str, Any]]:
+            sql_query: str,
+            limit: int = 1
+    ) -> Optional[list[dict[str, Any]]]:
         """Get historical stats to avoid repeated database queries."""
 
-        cache_key = self._normalize_query_pattern(sql_query)
+        cache_key = (
+            f"{self._normalize_query_pattern(sql_query)}_limit_{limit}"
+        )
         current_time = time.time()
-        
+
         time_diff = (
             current_time - 
             self._cache_timestamps.get(cache_key, 0)
@@ -1002,17 +1023,22 @@ class QueryAnalyzer:
             cache_key in self._historical_cache and 
             time_diff < self.cache_ttl
         ):
-            return self._historical_cache[cache_key]
-        
-        historical_stats = self._get_historical_query_stats(
-            sql_query
+            cached_data = self._historical_cache[cache_key]
+
+            if isinstance(cached_data, list):
+                return cached_data
+            else:
+                return [cached_data] if cached_data else None
+
+        historical_stats_list = self._get_historical_query_stats(
+            sql_query, limit=limit
         )
-        
-        if historical_stats:
-            self._historical_cache[cache_key] = historical_stats
+
+        if historical_stats_list:
+            self._historical_cache[cache_key] = historical_stats_list
             self._cache_timestamps[cache_key] = current_time
         
-        return historical_stats
+        return historical_stats_list
 
     def _get_execution_plan_with_timeout(
             self: Self,

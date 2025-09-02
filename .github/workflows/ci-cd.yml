@@ -1,0 +1,135 @@
+name: CI/CD - SQL Query Analyzer
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  POSTGRES_USER: postgres
+  POSTGRES_DB: vtb_db
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_PORT: 5432
+  API_PORT: 8000
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and start services with Docker Compose
+      uses: hoverkraft-tech/compose-action@v2.0.1
+      with:
+        compose-file: "docker-compose.yml"
+        up-flags: "--build -d"
+        services: "postgres api"
+      env:
+        POSTGRES_USER: ${{ env.POSTGRES_USER }}
+        POSTGRES_DB: ${{ env.POSTGRES_DB }}
+        POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        POSTGRES_PORT: ${{ env.POSTGRES_PORT }}
+        API_PORT: ${{ env.API_PORT }}
+
+    - name: Wait for PostgreSQL to be ready
+      run: |
+        sleep 10
+        docker compose exec postgres pg_isready -U ${{ env.POSTGRES_USER }} -d ${{ env.POSTGRES_DB }}
+
+    - name: Generate test data in PostgreSQL
+      run: |
+        # Create the employees table and insert test data
+        docker compose exec postgres psql -U ${{ env.POSTGRES_USER }} -d ${{ env.POSTGRES_DB }} << EOF
+        CREATE TABLE IF NOT EXISTS employees (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            department TEXT NOT NULL,
+            salary NUMERIC(10,2) NOT NULL,
+            hire_date DATE NOT NULL DEFAULT CURRENT_DATE
+        );
+
+        INSERT INTO employees (name, department, salary)
+        SELECT
+            'Employee_' || g,
+            CASE WHEN g % 5 = 0 THEN 'Engineering'
+                 WHEN g % 5 = 1 THEN 'HR'
+                 WHEN g % 5 = 2 THEN 'Finance'
+                 WHEN g % 5 = 3 THEN 'Sales'
+                 ELSE 'Marketing'
+            END,
+            (random() * 1000)::NUMERIC(10,2)
+        FROM generate_series(1, 1000) g;
+        EOF
+
+    - name: Verify test data was created
+      run: |
+        docker compose exec postgres psql -U ${{ env.POSTGRES_USER }} -d ${{ env.POSTGRES_DB }} -c "SELECT COUNT(*) FROM employees;"
+
+    - name: Wait for API to be ready
+      run: |
+        sleep 5
+        curl --retry 5 --retry-delay 5 --retry-all-errors http://localhost:${{ env.API_PORT }}/health
+
+    - name: Test analyze endpoint with real data
+      run: |
+        # Test basic query
+        curl -X POST "http://localhost:${{ env.API_PORT }}/analyze?query=SELECT+*+FROM+employees" -H "Content-Type: application/json"
+        
+        # Test query with WHERE clause
+        curl -X POST "http://localhost:${{ env.API_PORT }}/analyze?query=SELECT+*+FROM+employees+WHERE+department+%3D+'Engineering'" -H "Content-Type: application/json"
+        
+        # Test query with ORDER BY
+        curl -X POST "http://localhost:${{ env.API_PORT }}/analyze?query=SELECT+*+FROM+employees+ORDER+BY+salary+DESC" -H "Content-Type: application/json"
+
+    - name: Run comprehensive API tests
+      run: |
+        # Test health endpoint
+        curl -f http://localhost:${{ env.API_PORT }}/health || exit 1
+        
+        # Test that analyze endpoint returns valid JSON
+        response=$(curl -s -X POST "http://localhost:${{ env.API_PORT }}/analyze?query=SELECT+*+FROM+employees")
+        echo "$response" | jq . || exit 1
+
+  push-to-registry:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push Postgres image
+      uses: docker/build-push-action@v6
+      with:
+        context: ./postgres
+        file: ./postgres/Dockerfile
+        push: true
+        tags: |
+          alexflames77/custom-postgres-17:latest
+          alexflames77/custom-postgres-17:${{ github.sha }}
+
+    - name: Build and push API image
+      uses: docker/build-push-action@v6
+      with:
+        context: ./app
+        file: ./app/Dockerfile
+        push: true
+        tags: |
+          alexflames77/sql_analyzer:latest
+          alexflames77/sql_analyzer:${{ github.sha }}
