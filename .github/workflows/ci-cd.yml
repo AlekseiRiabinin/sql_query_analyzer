@@ -24,12 +24,9 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build and start services with Docker Compose
-      uses: hoverkraft-tech/compose-action@v2.0.1
-      with:
-        compose-file: "docker-compose.yml"
-        up-flags: "--build -d"
-        services: "postgres api"
+    - name: Build and start services
+      run: |
+        docker compose -f docker-compose.yml up --build -d postgres api
       env:
         POSTGRES_USER: ${{ env.POSTGRES_USER }}
         POSTGRES_DB: ${{ env.POSTGRES_DB }}
