@@ -23,29 +23,26 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Prepare CI env file
+    - name: Create CI-only env file
       run: |
-        grep -v -E "POSTGRES_PORT|PG_STAT_TRACK" .env > ci.env
-        echo "CI env file:"
+        cat <<EOF > ci.env
+        POSTGRES_USER=${{ env.POSTGRES_USER }}
+        POSTGRES_PASSWORD=${{ env.POSTGRES_PASSWORD }}
+        POSTGRES_DB=${{ env.POSTGRES_DB }}
+        API_PORT=${{ env.API_PORT }}
+        EOF
+        echo "Generated ci.env:"
         cat ci.env
-
-    - name: Reset containers and volumes
-      run: docker compose down -v || true
 
     - name: Build and start services
       run: |
         docker compose --env-file ci.env -f \
         docker-compose.yml up --build -d postgres api
-      env:
-        POSTGRES_USER: ${{ env.POSTGRES_USER }}
-        POSTGRES_DB: ${{ env.POSTGRES_DB }}
-        POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
-        API_PORT: ${{ env.API_PORT }}
 
     - name: Wait for PostgreSQL to be ready
       run: |
         for i in {1..30}; do
-          if docker compose exec -T postgres pg_isready \
+          if docker compose --env-file ci.env exec -T postgres pg_isready \
               -U ${{ env.POSTGRES_USER }} \
               -d ${{ env.POSTGRES_DB }}; then
             echo "Postgres is ready!"
@@ -57,9 +54,9 @@ jobs:
 
     - name: Generate test data in PostgreSQL
       run: |
-        docker compose exec -T postgres \
+        docker compose --env-file ci.env exec -T postgres \
           psql -U ${{ env.POSTGRES_USER }} \
-              -d ${{ env.POSTGRES_DB }} << EOF
+              -d ${{ env.POSTGRES_DB }} << 'EOF'
         CREATE TABLE IF NOT EXISTS employees (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
@@ -83,7 +80,7 @@ jobs:
 
     - name: Verify test data was created
       run: |
-        docker compose exec -T postgres \
+        docker compose --env-file ci.env exec -T postgres \
           psql -U ${{ env.POSTGRES_USER }} \
               -d ${{ env.POSTGRES_DB }} \
               -c "SELECT COUNT(*) FROM employees;"
@@ -119,16 +116,13 @@ jobs:
 
         echo "All API tests completed successfully!"
 
+
     - name: Run comprehensive API tests
       run: |
         curl -f http://localhost:${{ env.API_PORT }}/health || exit 1       
-   
+
         API_URL="http://localhost:${{ env.API_PORT }}/analyze"
         QUERY="SELECT+*+FROM+employees"
-        
+
         response=$(curl -s -X POST "$API_URL?query=$QUERY")
         echo "$response" | jq . || exit 1
-
-    - name: Show Postgres logs if failed
-      if: failure()
-      run: docker compose logs postgres
