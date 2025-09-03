@@ -10,7 +10,7 @@ env:
   POSTGRES_USER: postgres
   POSTGRES_DB: vtb_db
   POSTGRES_PASSWORD: postgres
-  POSTGRES_PORT: 5432
+  POSTGRES_PORT: 5435
   API_PORT: 8000
 
 jobs:
@@ -37,12 +37,15 @@ jobs:
     - name: Wait for PostgreSQL to be ready
       run: |
         sleep 10
-        docker compose exec postgres pg_isready -U ${{ env.POSTGRES_USER }} -d ${{ env.POSTGRES_DB }}
+        docker compose exec postgres pg_isready \
+          -U ${{ env.POSTGRES_USER }} \
+          -d ${{ env.POSTGRES_DB }}
 
     - name: Generate test data in PostgreSQL
       run: |
-        # Create the employees table and insert test data
-        docker compose exec postgres psql -U ${{ env.POSTGRES_USER }} -d ${{ env.POSTGRES_DB }} << EOF
+        docker compose exec postgres \
+          psql -U ${{ env.POSTGRES_USER }} \
+          -d ${{ env.POSTGRES_DB }} << EOF
         CREATE TABLE IF NOT EXISTS employees (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
@@ -66,67 +69,65 @@ jobs:
 
     - name: Verify test data was created
       run: |
-        docker compose exec postgres psql -U ${{ env.POSTGRES_USER }} -d ${{ env.POSTGRES_DB }} -c "SELECT COUNT(*) FROM employees;"
+        docker compose exec postgres \
+          psql -U ${{ env.POSTGRES_USER }} \
+          -d ${{ env.POSTGRES_DB }} \
+          -c "SELECT COUNT(*) FROM employees;"
 
     - name: Wait for API to be ready
       run: |
         sleep 5
-        curl --retry 5 --retry-delay 5 --retry-all-errors http://localhost:${{ env.API_PORT }}/health
+        curl --retry 5 \
+          --retry-delay 5 \
+          --retry-all-errors \
+          http://localhost:${{ env.API_PORT }}/health
 
     - name: Test analyze endpoint with real data
       run: |
-        # Test basic query
-        curl -X POST "http://localhost:${{ env.API_PORT }}/analyze?query=SELECT+*+FROM+employees" -H "Content-Type: application/json"
+        echo "Testing API analyze endpoint with various queries..."
         
-        # Test query with WHERE clause
-        curl -X POST "http://localhost:${{ env.API_PORT }}/analyze?query=SELECT+*+FROM+employees+WHERE+department+%3D+'Engineering'" -H "Content-Type: application/json"
+        echo "Testing basic SELECT query..."
+        API_URL="http://localhost:${{ env.API_PORT }}/analyze"
+        QUERY="SELECT+*+FROM+employees"
         
-        # Test query with ORDER BY
-        curl -X POST "http://localhost:${{ env.API_PORT }}/analyze?query=SELECT+*+FROM+employees+ORDER+BY+salary+DESC" -H "Content-Type: application/json"
+        curl -X POST \
+          "$API_URL?query=$QUERY" \
+          -H "Content-Type: application/json" \
+          --fail \
+          --silent \
+          --show-error
+
+        echo "Testing WHERE clause query..."
+        API_URL="http://localhost:${{ env.API_PORT }}/analyze"
+        QUERY="SELECT+*+FROM+employees+WHERE+department+%3D+'Engineering'"
+        
+        curl -X POST \
+          "$API_URL?query=$QUERY" \
+          -H "Content-Type: application/json" \
+          --fail \
+          --silent \
+          --show-error
+        
+        echo "Testing ORDER BY query..."
+        API_URL="http://localhost:${{ env.API_PORT }}/analyze"
+        QUERY="SELECT+*+FROM+employees+ORDER+BY+salary+DESC"
+        
+        curl -X POST \
+          "$API_URL?query=$QUERY" \
+          -H "Content-Type: application/json" \
+          --fail \
+          --silent \
+          --show-error
+        
+        echo "All API tests completed successfully!"
 
     - name: Run comprehensive API tests
       run: |
-        # Test health endpoint
-        curl -f http://localhost:${{ env.API_PORT }}/health || exit 1
+        curl -f http://localhost:${{ env.API_PORT }}/health || exit 1       
+   
+        API_URL="http://localhost:${{ env.API_PORT }}/analyze"
+        QUERY="SELECT+*+FROM+employees"
         
-        # Test that analyze endpoint returns valid JSON
-        response=$(curl -s -X POST "http://localhost:${{ env.API_PORT }}/analyze?query=SELECT+*+FROM+employees")
+        response=$(curl -s -X POST \
+          "$API_URL?query=$QUERY")
         echo "$response" | jq . || exit 1
-
-  push-to-registry:
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-    - name: Build and push Postgres image
-      uses: docker/build-push-action@v6
-      with:
-        context: ./postgres
-        file: ./postgres/Dockerfile
-        push: true
-        tags: |
-          alexflames77/custom-postgres-17:latest
-          alexflames77/custom-postgres-17:${{ github.sha }}
-
-    - name: Build and push API image
-      uses: docker/build-push-action@v6
-      with:
-        context: ./app
-        file: ./app/Dockerfile
-        push: true
-        tags: |
-          alexflames77/sql_analyzer:latest
-          alexflames77/sql_analyzer:${{ github.sha }}
