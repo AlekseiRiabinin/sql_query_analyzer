@@ -11,9 +11,10 @@ from fastapi import FastAPI, HTTPException, Request, Depends, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from typing import Optional, Generator, AsyncGenerator
+from typing import Generator, AsyncGenerator
 from database import get_db
-from query_analyzer import QueryAnalyzer
+# from query_analyzer import QueryAnalyzer
+from query_analyzer import EnhancedQueryAnalyzer as QueryAnalyzer
 from middleware import ResponseLoggingMiddleware
 
 

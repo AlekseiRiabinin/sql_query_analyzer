@@ -312,7 +312,7 @@ The CI/CD workflow is defined in `.github/workflows/ci-cd.yml` and runs on push 
 8. **Failure Debugging:** Automatically outputs PostgreSQL logs if any step fails, aiding in rapid troubleshooting.
 
 
-##  References
+## 📚 References
 1. Mason, K. et al. (2018). Predicting host CPU utilization in the cloud using evolutionary neural networks. Future Generation Computer Systems.
 
 2. Liu, X. (2024). Towards CPU Performance Prediction: New Challenge Benchmark Dataset and Novel Approach.

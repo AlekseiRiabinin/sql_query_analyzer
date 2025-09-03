@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 from pg_feature_extractor import PostgresFeatureExtractor
 from resource_monitor import ContainersResourceMonitor
 from pg_feature_extractor import TableSize
+from advanced_analyzer import (
+    AdvancedQueryAnalyzer,
+    AdvancedPlanMetrics
+)
 
 
 @dataclass
@@ -70,6 +74,8 @@ class QueryAnalysisResult:
     # Security and safety flags
     is_read_only: bool = True
 
+    # Advanced metrics
+    advanced_metrics: Optional[dict[str, Any]] = None
 
     def to_dict(self: Self) -> dict[str, Any]:
         """Convert the analysis result to a dict."""
@@ -1221,3 +1227,75 @@ class QueryAnalyzer:
                 return True
                 
         return False
+
+
+class EnhancedQueryAnalyzer(QueryAnalyzer):
+    """Enhanced query analyzer with advanced features."""
+    
+    def __init__(
+        self: Self,
+        connection: psycopg.Connection
+    ) -> None:
+        """Initialization with database connection."""
+
+        super().__init__(connection)
+        self.advanced_analyzer = AdvancedQueryAnalyzer(
+            self.feature_extractor
+        )
+        self.advanced_metrics: Optional[AdvancedPlanMetrics] = None
+    
+    def analyze_query(
+        self: Self,
+        sql_query: str,
+        include_resources: bool = True, 
+        include_historical: bool = True
+    ) -> QueryAnalysisResult:
+        """Enhanced analyze_query with advanced metrics."""
+
+        # Use the parent class's analyze_query method
+        result = super().analyze_query(
+            sql_query, include_resources, include_historical
+        )
+        
+        # Perform advanced analysis on top of the basic analysis
+        if result.execution_plan:
+            self.advanced_metrics = (
+                self.advanced_analyzer.analyze_advanced_metrics(
+                    result.execution_plan
+                )
+            )
+
+            # Add advanced recommendations to result
+            if self.advanced_metrics:
+                self._add_advanced_recommendations(
+                    result, self.advanced_metrics
+                )
+                result.advanced_metrics = (
+                    self.advanced_metrics.__dict__
+                )
+
+        return result
+    
+    def _add_advanced_recommendations(
+        self: Self,
+        result: QueryAnalysisResult, 
+        metrics: AdvancedPlanMetrics
+    ) -> None:
+        """Add advanced recommendations to analysis result."""
+
+        advanced_recs = []
+
+        advanced_recs.extend(metrics.join_recommendations)     
+        advanced_recs.extend(metrics.aggregation_recommendations)
+        advanced_recs.extend(metrics.partitioning_recommendations)
+        advanced_recs.extend(metrics.index_recommendations)
+        
+        # Add to existing recommendations
+        result.recommendations.extend(advanced_recs)
+    
+    def get_advanced_metrics(
+        self: Self
+    ) -> Optional[AdvancedPlanMetrics]:
+        """Get advanced analysis metrics."""
+
+        return self.advanced_metrics
