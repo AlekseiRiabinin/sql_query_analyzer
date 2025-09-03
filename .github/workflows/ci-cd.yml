@@ -23,9 +23,19 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Prepare CI env file
+      run: |
+        grep -v -E "POSTGRES_PORT|PG_STAT_TRACK" .env > ci.env
+        echo "CI env file:"
+        cat ci.env
+
+    - name: Reset containers and volumes
+      run: docker compose down -v || true
+
     - name: Build and start services
       run: |
-        docker compose -f docker-compose.yml up --build -d postgres api
+        docker compose --env-file ci.env -f \
+        docker-compose.yml up --build -d postgres api
       env:
         POSTGRES_USER: ${{ env.POSTGRES_USER }}
         POSTGRES_DB: ${{ env.POSTGRES_DB }}
@@ -118,3 +128,7 @@ jobs:
         
         response=$(curl -s -X POST "$API_URL?query=$QUERY")
         echo "$response" | jq . || exit 1
+
+    - name: Show Postgres logs if failed
+      if: failure()
+      run: docker compose logs postgres
