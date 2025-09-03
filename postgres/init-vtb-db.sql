@@ -27,4 +27,3 @@ GRANT SELECT ON pg_stat_statements TO postgres;
 GRANT SELECT ON pg_stat_activity TO postgres;
 GRANT SELECT ON pg_stats TO postgres;
 GRANT SELECT ON pg_locks TO postgres;
-GRANT SELECT ON pg_monitor TO postgres;

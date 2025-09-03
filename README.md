@@ -4,12 +4,14 @@ A sophisticated performance analysis tool for PostgreSQL queries that combines e
 
 ## 🚀 Features
 
-- **Execution Plan Analysis**: Detailed EXPLAIN analysis with cost estimation
+- **Execution Plan Analysis**: Detailed `EXPLAIN` analysis with cost estimation
 - **Resource Prediction**: Empirical-based memory and CPU usage prediction
 - **Cross-Container Monitoring**: Real-time Docker container resource utilization
 - **Intelligent Recommendations**: AI-driven performance optimization suggestions (* In future release)
 - **Historical Context**: Integration with `pg_stat_statements` for trend analysis
 - **Safety Features**: Query validation and timeout protection
+- **Comprehensive Logging**: Structured logging of queries, execution plans, resource usage, and errors
+- **CI/CD Integration**: Automated build, test, and API validation workflow using GitHub Actions
 
 ## 📊 Architecture
 
@@ -41,6 +43,7 @@ sql_query-analyzer/
 │       └── ci-cd.yml 
 ├── docker-compose.yml
 ├── postgres/
+│   ├── Dockerfile
 │   ├── init-pg-stat.sql
 │   └── init-vtb-db.sql
 ├── app/
@@ -282,6 +285,31 @@ INFO: Optimization Recommendations: 0
 - Log files are persisted in the `app_logs` Docker volume
 
 - Middleware automatically handles JSON parsing and error scenarios
+
+
+## 🤖 CI/CD Pipeline
+
+The project includes an automated CI/CD workflow using GitHub Actions to ensure code quality, deploy Docker containers, and validate functionality of the SQL Query Analyzer.
+
+**Workflow Overview**
+
+The CI/CD workflow is defined in `.github/workflows/ci-cd.yml` and runs on push or pull_request events targeting the main or master branches. It consists of the following steps:
+
+1. **Checkout Code:** Pulls the latest repository code.
+
+2. **Setup Docker Buildx:** Prepares Docker Buildx to build multi-platform images.
+
+3. **Build and Start Services:** Uses `docker compose up --build -d` to build and start the PostgreSQL and API containers.
+
+4. **Generate Test Data:** Creates an employees table and populates it with 1,000 rows of sample data for testing.
+
+5. **Verify Test Data:** Confirms that data was inserted correctly with a `SELECT COUNT(*)` query.
+
+6. **API Endpoint Testing:** Tests the `/analyze` endpoint with multiple queries, including basic `SELECT`, `WHERE`, and `ORDER BY` queries.
+
+7. **Comprehensive API Validation:** Verifies API health and parses JSON responses from `/analyze` to ensure functionality.
+
+8. **Failure Debugging:** Automatically outputs PostgreSQL logs if any step fails, aiding in rapid troubleshooting.
 
 
 ##  References
