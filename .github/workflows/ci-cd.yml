@@ -10,7 +10,6 @@ env:
   POSTGRES_USER: postgres
   POSTGRES_DB: vtb_db
   POSTGRES_PASSWORD: postgres
-  POSTGRES_PORT: 5435
   API_PORT: 8000
 
 jobs:
@@ -31,21 +30,26 @@ jobs:
         POSTGRES_USER: ${{ env.POSTGRES_USER }}
         POSTGRES_DB: ${{ env.POSTGRES_DB }}
         POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
-        POSTGRES_PORT: ${{ env.POSTGRES_PORT }}
         API_PORT: ${{ env.API_PORT }}
 
     - name: Wait for PostgreSQL to be ready
       run: |
-        sleep 10
-        docker compose exec postgres pg_isready \
-          -U ${{ env.POSTGRES_USER }} \
-          -d ${{ env.POSTGRES_DB }}
+        for i in {1..30}; do
+          if docker compose exec -T postgres pg_isready \
+              -U ${{ env.POSTGRES_USER }} \
+              -d ${{ env.POSTGRES_DB }}; then
+            echo "Postgres is ready!"
+            break
+          fi
+          echo "Waiting for Postgres..."
+          sleep 2
+        done
 
     - name: Generate test data in PostgreSQL
       run: |
-        docker compose exec postgres \
+        docker compose exec -T postgres \
           psql -U ${{ env.POSTGRES_USER }} \
-          -d ${{ env.POSTGRES_DB }} << EOF
+              -d ${{ env.POSTGRES_DB }} << EOF
         CREATE TABLE IF NOT EXISTS employees (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
@@ -69,10 +73,10 @@ jobs:
 
     - name: Verify test data was created
       run: |
-        docker compose exec postgres \
+        docker compose exec -T postgres \
           psql -U ${{ env.POSTGRES_USER }} \
-          -d ${{ env.POSTGRES_DB }} \
-          -c "SELECT COUNT(*) FROM employees;"
+              -d ${{ env.POSTGRES_DB }} \
+              -c "SELECT COUNT(*) FROM employees;"
 
     - name: Wait for API to be ready
       run: |
@@ -86,39 +90,23 @@ jobs:
       run: |
         echo "Testing API analyze endpoint with various queries..."
         
-        echo "Testing basic SELECT query..."
         API_URL="http://localhost:${{ env.API_PORT }}/analyze"
+
+        echo "Testing basic SELECT query..."
         QUERY="SELECT+*+FROM+employees"
-        
-        curl -X POST \
-          "$API_URL?query=$QUERY" \
-          -H "Content-Type: application/json" \
-          --fail \
-          --silent \
-          --show-error
+        curl -X POST "$API_URL?query=$QUERY" \
+          -H "Content-Type: application/json" --fail --silent --show-error
 
         echo "Testing WHERE clause query..."
-        API_URL="http://localhost:${{ env.API_PORT }}/analyze"
         QUERY="SELECT+*+FROM+employees+WHERE+department+%3D+'Engineering'"
-        
-        curl -X POST \
-          "$API_URL?query=$QUERY" \
-          -H "Content-Type: application/json" \
-          --fail \
-          --silent \
-          --show-error
-        
+        curl -X POST "$API_URL?query=$QUERY" \
+          -H "Content-Type: application/json" --fail --silent --show-error
+
         echo "Testing ORDER BY query..."
-        API_URL="http://localhost:${{ env.API_PORT }}/analyze"
         QUERY="SELECT+*+FROM+employees+ORDER+BY+salary+DESC"
-        
-        curl -X POST \
-          "$API_URL?query=$QUERY" \
-          -H "Content-Type: application/json" \
-          --fail \
-          --silent \
-          --show-error
-        
+        curl -X POST "$API_URL?query=$QUERY" \
+          -H "Content-Type: application/json" --fail --silent --show-error
+
         echo "All API tests completed successfully!"
 
     - name: Run comprehensive API tests
@@ -128,6 +116,5 @@ jobs:
         API_URL="http://localhost:${{ env.API_PORT }}/analyze"
         QUERY="SELECT+*+FROM+employees"
         
-        response=$(curl -s -X POST \
-          "$API_URL?query=$QUERY")
+        response=$(curl -s -X POST "$API_URL?query=$QUERY")
         echo "$response" | jq . || exit 1
