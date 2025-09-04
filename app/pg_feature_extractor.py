@@ -356,3 +356,32 @@ class PostgresFeatureExtractor:
         metrics['buffer_cache'] = 'Not available'
         
         return metrics
+
+    def get_table_columns(
+        self: Self,
+        table_name: str
+    ) -> list[str]:
+        """Get a list of column names for a table."""
+
+        query = sql.SQL("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = %s
+            ORDER BY ordinal_position;
+        """)
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (table_name,))
+
+                return [
+                    row[0] for row 
+                    in cur.fetchall()
+                ]
+
+        except psycopg.Error as e:
+            print(
+                f"Error getting columns for "
+                f"{table_name}: {e}"
+            )
+
+            return []

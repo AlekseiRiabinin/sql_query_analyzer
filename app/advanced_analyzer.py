@@ -125,14 +125,28 @@ class AdvancedQueryAnalyzer:
         
         if (
             not execution_plan or 
-            not isinstance(execution_plan, list)
+            not isinstance(execution_plan, dict)
         ):
             return metrics
         
-        plan_data = (
-            execution_plan[0].get("Plan", {}) 
-            if execution_plan else {}
-        )
+        if "Plan" in execution_plan:
+            plan_data = execution_plan["Plan"]
+
+        elif (
+            isinstance(execution_plan, list) and 
+            len(execution_plan) > 0
+        ):
+            first_element = execution_plan[0]
+            if (
+                isinstance(first_element, dict) and 
+                "Plan" in first_element
+            ):
+                plan_data = first_element["Plan"]
+            else:
+                plan_data = first_element
+
+        else:
+            plan_data = execution_plan
 
         # Recursively analyze plan nodes
         self._analyze_plan_node(plan_data, metrics)
@@ -227,7 +241,9 @@ class AdvancedQueryAnalyzer:
         """Analyze join conditions for missing indexes."""
 
         column_pattern = r'(\w+)\.(\w+)'
-        column_matches = re.findall(column_pattern, condition)
+        column_matches = re.findall(
+            column_pattern, condition
+        )
 
         for table_ref, column_name in column_matches:
             if table_ref == table_name or not table_ref:
@@ -475,33 +491,42 @@ class AdvancedQueryAnalyzer:
         """Generate advanced index recommendations."""
 
         recommendations = []
-        
+
+        has_get_table_columns = hasattr(
+            self.feature_extractor, 'get_table_columns'
+        )
+
         for table in set(
             metrics.join_tables + metrics.aggregation_tables
         ):
             if table:
-                try:
-                    table_info = (
-                        self.feature_extractor.get_table_columns(table)
-                    )
-                    if (
-                        table_info and 
-                        len(table_info) > self.COVERING_INDEX_THRESHOLD
-                    ):
-                        recommendations.append({
-                            "type": "covering_index",
-                            "priority": "LOW",
-                            "message": (
-                                f"Table '{table}' has many columns "
-                                f"and is used in operations. "
-                                f"Consider covering indexes for "
-                                f"frequently accessed column combinations."
-                            ),
-                            "table": table,
-                            "column_count": len(table_info)
-                        })
-                except Exception:
-                    pass
+                 if has_get_table_columns:
+                    try:
+                        table_columns = (
+                            self.feature_extractor.get_table_columns(
+                                table
+                            )
+                        )
+                        threshold = self.COVERING_INDEX_THRESHOLD
+                        if (
+                            table_columns and 
+                            len(table_columns) > threshold
+                        ):
+                            recommendations.append({
+                                "type": "covering_index",
+                                "priority": "LOW",
+                                "message": (
+                                    f"Table '{table}' has "
+                                    f"{len(table_columns)} columns "
+                                    f"and is used in operations. "
+                                    f"Consider covering indexes for "
+                                    f"frequently accessed columns."
+                                ),
+                                "table": table,
+                                "column_count": len(table_columns)
+                            })
+                    except Exception:
+                        pass
         
         for table in set(metrics.join_tables):
             if table:
@@ -551,27 +576,49 @@ class AdvancedQueryAnalyzer:
                 self._index_cache[table_name] = []
         
         for index in self._index_cache.get(table_name, []):
-
-            # Handle different IndexInfo structures
             if (
-                hasattr(index, 'column_names') and 
-                column_name in index.column_names
+                hasattr(index, 'index_definition') and 
+                index.index_definition
             ):
-                return True
-
-            elif (
-                hasattr(index, 'columns') and 
-                column_name in index.columns
-            ):
-                return True
-
-            elif (
-                hasattr(index, 'column') and 
-                column_name == index.column
-            ):
-                return True
+                if self._is_column_in_index_definition(
+                    column_name, index.index_definition
+                ):
+                    return True
         
         return False
+
+    def _is_column_in_index_definition(
+        self: Self,
+        column_name: str,
+        index_definition: str
+    ) -> bool:
+        """Check if a column is in index definition SQL."""
+
+        if not index_definition or not column_name:
+            return False
+        
+        word_pattern = rf'\b{re.escape(column_name)}\b'
+        quoted_pattern = rf'"{re.escape(column_name)}"'      
+        parenthesized_pattern = (
+            rf'\(\s*{re.escape(column_name)}\s*[\),]'
+        )
+        
+        return (
+            re.search(
+                word_pattern,
+                index_definition,
+                re.IGNORECASE
+            ) is not None or
+            re.search(
+                quoted_pattern,
+                index_definition
+            ) is not None or
+            re.search(
+                parenthesized_pattern,
+                index_definition,
+                re.IGNORECASE
+            ) is not None
+        )
 
     def _get_table_size(
         self: Self,
