@@ -14,7 +14,7 @@ from pg_feature_extractor import (
 @dataclass
 class AdvancedPlanMetrics:
     """Enhanced metrics for query analysis."""
-    
+
     # Join analysis
     join_types: list[str] = field(
         default_factory=list
@@ -55,7 +55,7 @@ class AdvancedPlanMetrics:
     foreign_key_indexes_missing: list[dict[str, Any]] = field(
         default_factory=list
     )
-    
+
     # Recommendations (added during analysis)
     join_recommendations: list[dict[str, Any]] = field(
         default_factory=list
@@ -133,7 +133,7 @@ class AdvancedQueryAnalyzer:
             execution_plan[0].get("Plan", {}) 
             if execution_plan else {}
         )
-        
+
         # Recursively analyze plan nodes
         self._analyze_plan_node(plan_data, metrics)
         
@@ -165,13 +165,24 @@ class AdvancedQueryAnalyzer:
         
         elif node_type == "Seq Scan":
             self._analyze_sequential_scan_node(node, metrics)
-        
+
+        # Handle different child node structures
+        child_nodes = []
+
         if (
             "Plans" in node and 
             isinstance(node["Plans"], list)
         ):
-            for child_node in node["Plans"]:
-                self._analyze_plan_node(child_node, metrics)
+            child_nodes = node["Plans"]
+
+        elif (
+            "Plans" in node and 
+            isinstance(node["Plans"], dict)
+        ):
+            child_nodes = [node["Plans"]]
+        
+        for child_node in child_nodes:
+            self._analyze_plan_node(child_node, metrics)
     
     def _analyze_join_node(
         self: Self,
@@ -182,7 +193,10 @@ class AdvancedQueryAnalyzer:
 
         node_type = node.get("Node Type", "")
         relation_name = node.get("Relation Name", "")
-        join_type = node_type.replace(" Join", "").lower()
+
+        join_type = ""
+        if node_type and isinstance(node_type, str):
+            join_type = node_type.replace(" Join", "").lower()
         
         metrics.join_types.append(join_type)
         if relation_name:
@@ -195,14 +209,15 @@ class AdvancedQueryAnalyzer:
         
         join_condition = (
             node.get("Join Filter") or 
-            node.get("Hash Condition")
+            node.get("Hash Condition") or
+            node.get("Merge Condition")
         )
-        if join_condition:
+        if join_condition and isinstance(join_condition, str):
             metrics.join_conditions.append(join_condition)
             self._analyze_join_condition(
                 join_condition, relation_name, metrics
             )
-    
+
     def _analyze_join_condition(
         self: Self,
         condition: str,
@@ -292,7 +307,10 @@ class AdvancedQueryAnalyzer:
     ) -> bool:
         """Check if table is a good candidate for partitioning."""
 
-        if not filter_condition:
+        if (
+            not filter_condition or 
+            not isinstance(filter_condition, str)
+        ):
             return False
 
         # Look for date/time filters (common partitioning columns)
@@ -324,7 +342,7 @@ class AdvancedQueryAnalyzer:
         """Generate join-specific recommendations."""
 
         recommendations = []
-        
+
         if metrics.nested_loop_on_large_tables:
             recommendations.append({
                 "type": "join_strategy",
@@ -461,49 +479,54 @@ class AdvancedQueryAnalyzer:
         for table in set(
             metrics.join_tables + metrics.aggregation_tables
         ):
-            table_info = (
-                self.feature_extractor.get_table_columns(table)
-            )
-            if (
-                table_info and 
-                len(table_info) > self.COVERING_INDEX_THRESHOLD
-            ):
-                recommendations.append({
-                    "type": "covering_index",
-                    "priority": "LOW",
-                    "message": (
-                        f"Table '{table}' has many columns "
-                        f"and is used in operations. "
-                        f"Consider covering indexes for "
-                        f"frequently accessed column combinations."
-                    ),
-                    "table": table,
-                    "column_count": len(table_info)
-                })
+            if table:
+                try:
+                    table_info = (
+                        self.feature_extractor.get_table_columns(table)
+                    )
+                    if (
+                        table_info and 
+                        len(table_info) > self.COVERING_INDEX_THRESHOLD
+                    ):
+                        recommendations.append({
+                            "type": "covering_index",
+                            "priority": "LOW",
+                            "message": (
+                                f"Table '{table}' has many columns "
+                                f"and is used in operations. "
+                                f"Consider covering indexes for "
+                                f"frequently accessed column combinations."
+                            ),
+                            "table": table,
+                            "column_count": len(table_info)
+                        })
+                except Exception:
+                    pass
         
         for table in set(metrics.join_tables):
-            fk_indexes_missing = (
-                self._get_missing_foreign_key_indexes(table)
-            )
-            for fk_info in fk_indexes_missing:
-                recommendations.append({
-                    "type": "foreign_key_index",
-                    "priority": "MEDIUM",
-                    "message": (
-                        f"Missing index on foreign key column "
-                        f"{fk_info['column']} "
-                        f"in table {fk_info['table']}"
-                    ),
-                    "table": fk_info["table"],
-                    "column": fk_info["column"],
-                    "index_suggestion": (
-                        f"CREATE INDEX idx_"
-                        f"{fk_info['table']}_"
-                        f"{fk_info['column']} "
-                        f"ON {fk_info['table']} "
-                        f"({fk_info['column']});"
-                    )
-                })
+            if table:
+                fk_indexes_missing = (
+                    self._get_missing_foreign_key_indexes(table)
+                )
+                for fk_info in fk_indexes_missing:
+                    recommendations.append({
+                        "type": "foreign_key_index",
+                        "priority": "MEDIUM",
+                        "message": (
+                            f"Missing index on foreign key column "
+                            f"{fk_info['column']} "
+                            f"in table {fk_info['table']}"
+                        ),
+                        "table": fk_info["table"],
+                        "column": fk_info["column"],
+                        "index_suggestion": (
+                            f"CREATE INDEX idx_"
+                            f"{fk_info['table']}_"
+                            f"{fk_info['column']} "
+                            f"ON {fk_info['table']} "
+                            f"({fk_info['column']});"
+                        )
+                    })
 
         metrics.index_recommendations = recommendations
     
@@ -514,6 +537,9 @@ class AdvancedQueryAnalyzer:
     ) -> bool:
         """Check if a column has an index."""
 
+        if not table_name or not column_name:
+            return False
+
         if table_name not in self._index_cache:
             try:
                 self._index_cache[table_name] = (
@@ -521,12 +547,28 @@ class AdvancedQueryAnalyzer:
                         table_name
                     )
                 )
-
             except Exception:
                 self._index_cache[table_name] = []
         
         for index in self._index_cache.get(table_name, []):
-            if column_name in index.column_names:
+
+            # Handle different IndexInfo structures
+            if (
+                hasattr(index, 'column_names') and 
+                column_name in index.column_names
+            ):
+                return True
+
+            elif (
+                hasattr(index, 'columns') and 
+                column_name in index.columns
+            ):
+                return True
+
+            elif (
+                hasattr(index, 'column') and 
+                column_name == index.column
+            ):
                 return True
         
         return False
@@ -564,7 +606,8 @@ class AdvancedQueryAnalyzer:
 
         return (
             plan_rows > threshold and 
-            "Filter" not in str(node)
+            "Filter" not in node and
+            str(node).find("count") != -1
         )
 
     def _get_missing_foreign_key_indexes(
@@ -575,6 +618,9 @@ class AdvancedQueryAnalyzer:
 
         missing_indexes = []
 
+        if not table_name:
+            return missing_indexes
+
         try:
             foreign_keys = (
                 self.feature_extractor.get_foreign_keys(
@@ -582,13 +628,30 @@ class AdvancedQueryAnalyzer:
                 )
             )
             for fk in foreign_keys:
-                if not self._has_index_for_column(
-                    table_name, fk.column_name
+
+                # Handle different foreign key structures
+                column_name = None
+
+                if hasattr(fk, 'column_name'):
+                    column_name = fk.column_name
+
+                elif hasattr(fk, 'column'):
+                    column_name = fk.column
+                
+                if (
+                    column_name and 
+                    not self._has_index_for_column(
+                        table_name, column_name
+                    )
                 ):
                     missing_indexes.append({
                         "table": table_name,
-                        "column": fk.column_name,
-                        "references": fk.referenced_table
+                        "column": column_name,
+                        "references": (
+                            getattr(
+                                fk, 'referenced_table', 'unknown'
+                            )
+                        )
                     })
 
         except Exception:
