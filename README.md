@@ -53,6 +53,7 @@ sql_query-analyzer/
 │   ├── middleware.py
 │   ├── database.py
 │   ├── query_analyzer.py
+│   ├── advanced_analyzer.py
 │   ├── pg_feature_extractor.py
 │   ├── resource_monitor.py
 ├── logs/    

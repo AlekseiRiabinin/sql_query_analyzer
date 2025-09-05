@@ -79,7 +79,7 @@ class QueryAnalysisResult:
 
     def to_dict(self: Self) -> dict[str, Any]:
         """Convert the analysis result to a dict."""
-        return {
+        result_dict = {
             'query': self.query,
             'performance_metrics': {
                 'total_cost': self.total_cost,
@@ -111,6 +111,17 @@ class QueryAnalysisResult:
             'timestamp': self.analysis_timestamp.isoformat()
         }
 
+        if self.advanced_metrics:
+            if hasattr(self.advanced_metrics, '__dict__'):
+                result_dict['advanced_metrics'] = (
+                    self.advanced_metrics.__dict__
+                )
+            else:
+                result_dict['advanced_metrics'] = (
+                    self.advanced_metrics
+                )
+
+        return result_dict
 
 class QueryAnalyzer:
     """Analyzes SQL queries with EXPLAIN."""
@@ -261,7 +272,7 @@ class QueryAnalyzer:
         include_historical: bool = True
     ) -> QueryAnalysisResult:
         """Analyze SQL query and provide recommendations."""
-        
+
         # Input validation
         if not sql_query or not sql_query.strip():
             raise ValueError("Query cannot be empty")
@@ -1380,7 +1391,7 @@ class QueryAnalyzer:
             
             if (
                 analysis_result.total_cost > cost_threshold * 0.7 and 
-                memory_percent > 90
+                memory_percent > self.APP_MEMORY_PRESSURE_THRESHOLD
             ):
                 return True
             
@@ -1418,6 +1429,16 @@ class EnhancedQueryAnalyzer(QueryAnalyzer):
         
         # Perform advanced analysis on top of the basic analysis
         if result.execution_plan:
+            print(
+                f"Execution plan structure: "
+                f"{type(result.execution_plan)}"
+            )
+            condition = (
+                result.execution_plan.keys() 
+                if isinstance(result.execution_plan, dict) 
+                else 'Not a dict'
+            )
+            print(f"Keys in execution_plan: {condition}")
             self.advanced_metrics = (
                 self.advanced_analyzer.analyze_advanced_metrics(
                     result.execution_plan
