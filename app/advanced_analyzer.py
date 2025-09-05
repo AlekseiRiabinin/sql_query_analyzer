@@ -74,11 +74,12 @@ class AdvancedPlanMetrics:
 class AdvancedQueryAnalyzer:
     """Enhanced query analyzer with advanced features."""
     
-    DEFAULT_LARGE_TABLE_THRESHOLD = 1024 * 1024 * 100        # 100MB
-    DEFAULT_VERY_LARGE_TABLE_THRESHOLD = 1024 * 1024 * 1024  # 1GB
-    DEFAULT_NESTED_LOOP_THRESHOLD = 10000
-    DEFAULT_APPROXIMATE_COUNT_THRESHOLD = 100000
-    DEFAULT_COVERING_INDEX_THRESHOLD = 5   # Tables with >5 columns
+    # Adjusted for ~10,000 row tables
+    DEFAULT_LARGE_TABLE_THRESHOLD = 1024 * 1024 * 1        # 1MB (tables with ~1K-10K rows)
+    DEFAULT_VERY_LARGE_TABLE_THRESHOLD = 1024 * 1024 * 10  # 10MB (tables with ~100K+ rows)
+    DEFAULT_NESTED_LOOP_THRESHOLD = 1000                   # Number of rows
+    DEFAULT_APPROXIMATE_COUNT_THRESHOLD = 5000             # Number of rows
+    DEFAULT_COVERING_INDEX_THRESHOLD = 5                   # >5 columns
 
     def __init__(
         self: Self,

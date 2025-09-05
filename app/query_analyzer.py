@@ -115,9 +115,51 @@ class QueryAnalysisResult:
 class QueryAnalyzer:
     """Analyzes SQL queries with EXPLAIN."""
 
+    # Default constants for ~10,000 row scale
+    DEFAULT_QUERY_LENGTH_LIMIT = 10000
+    DEFAULT_BASE_MEMORY_BYTES = 1024 * 1024            # 1MB
+    DEFAULT_BASE_CPU_SECONDS = 0.001                   # 1ms
+    DEFAULT_COST_TO_CPU_FACTOR = 0.0001
+    DEFAULT_MEMORY_THRESHOLD_MEDIUM = 10               # 10MB
+    DEFAULT_MEMORY_THRESHOLD_HIGH = 50                 # 50MB
+    DEFAULT_CPU_THRESHOLD_MEDIUM = 100                 # 100ms
+    DEFAULT_CPU_THRESHOLD_HIGH = 500                   # 500ms
+    DEFAULT_LARGE_TABLE_THRESHOLD = 1024 * 1024 * 100  # 100MB
+    DEFAULT_SORT_THRESHOLD = 10000
+    DEFAULT_CACHE_HIT_THRESHOLD = 90                   # 90%
+    DEFAULT_CONNECTION_THRESHOLD = 80                  # 80%
+    DEFAULT_DISK_WRITE_THRESHOLD = 50 * 1024 * 1024    # 50MB/s
+    DEFAULT_DISK_IOPS_THRESHOLD = 1000
+    DEFAULT_MAX_QUERY_COST = 10000
+    DEFAULT_MEMORY_CRITICAL_THRESHOLD = 85             # 85% memory usage
+    DEFAULT_CPU_CRITICAL_THRESHOLD = 90                # 90% CPU usage
+    DEFAULT_APP_MEMORY_HIGH_THRESHOLD = 90             # 90% app memory usage
+    DEFAULT_APP_MEMORY_PRESSURE_THRESHOLD = 80         # 80% memory usage
+    DEFAULT_APP_CPU_HIGH_THRESHOLD = 70                # 70% CPU usage
+
     def __init__(
         self: Self,
-        connection: psycopg.Connection
+        connection: psycopg.Connection,
+        query_length_limit: Optional[int] = None,
+        base_memory_bytes: Optional[int] = None,
+        base_cpu_seconds: Optional[float] = None,
+        cost_to_cpu_factor: Optional[float] = None,
+        memory_threshold_medium: Optional[int] = None,
+        memory_threshold_high: Optional[int] = None,
+        cpu_threshold_medium: Optional[int] = None,
+        cpu_threshold_high: Optional[int] = None,
+        large_table_threshold: Optional[int] = None,
+        sort_threshold: Optional[int] = None,
+        cache_hit_threshold: Optional[int] = None,
+        connection_threshold: Optional[int] = None,
+        disk_write_threshold: Optional[int] = None,
+        disk_iops_threshold: Optional[int] = None,
+        max_query_cost: Optional[float] = None,
+        memory_critical_threshold: Optional[int] = None,
+        cpu_critical_threshold: Optional[int] = None,
+        app_memory_high_threshold: Optional[int] = None,
+        app_memory_pressure_threshold: Optional[int] = None,
+        app_cpu_high_threshold: Optional[int] = None
     ) -> None:
         """Initialization with database connection."""
 
@@ -129,6 +171,88 @@ class QueryAnalyzer:
         self._historical_cache: dict[str, dict[str, Any]] = {}
         self._cache_timestamps: dict[str, float] = {}
         self.cache_ttl = 300  # 5 minutes TTL for cache
+
+        # Set thresholds with defaults
+        self.QUERY_LENGTH_LIMIT = (
+            query_length_limit or 
+            self.DEFAULT_QUERY_LENGTH_LIMIT
+        )
+        self.BASE_MEMORY_BYTES = (
+            base_memory_bytes or 
+            self.DEFAULT_BASE_MEMORY_BYTES
+        )
+        self.BASE_CPU_SECONDS = (
+            base_cpu_seconds or 
+            self.DEFAULT_BASE_CPU_SECONDS
+        )
+        self.COST_TO_CPU_FACTOR = (
+            cost_to_cpu_factor or 
+            self.DEFAULT_COST_TO_CPU_FACTOR
+        )
+        self.MEMORY_THRESHOLD_MEDIUM = (
+            memory_threshold_medium or 
+            self.DEFAULT_MEMORY_THRESHOLD_MEDIUM
+        )
+        self.MEMORY_THRESHOLD_HIGH = (
+            memory_threshold_high or 
+            self.DEFAULT_MEMORY_THRESHOLD_HIGH
+        )
+        self.CPU_THRESHOLD_MEDIUM = (
+            cpu_threshold_medium or 
+            self.DEFAULT_CPU_THRESHOLD_MEDIUM
+        )
+        self.CPU_THRESHOLD_HIGH = (
+            cpu_threshold_high or 
+            self.DEFAULT_CPU_THRESHOLD_HIGH
+        )
+        self.LARGE_TABLE_THRESHOLD = (
+            large_table_threshold or 
+            self.DEFAULT_LARGE_TABLE_THRESHOLD
+        )
+        self.SORT_THRESHOLD = (
+            sort_threshold or 
+            self.DEFAULT_SORT_THRESHOLD
+        )
+        self.CACHE_HIT_THRESHOLD = (
+            cache_hit_threshold or 
+            self.DEFAULT_CACHE_HIT_THRESHOLD
+        )
+        self.CONNECTION_THRESHOLD = (
+            connection_threshold or 
+            self.DEFAULT_CONNECTION_THRESHOLD
+        )
+        self.DISK_WRITE_THRESHOLD = (
+            disk_write_threshold or 
+            self.DEFAULT_DISK_WRITE_THRESHOLD
+        )
+        self.DISK_IOPS_THRESHOLD = (
+            disk_iops_threshold or 
+            self.DEFAULT_DISK_IOPS_THRESHOLD
+        )
+        self.MAX_QUERY_COST = (
+            max_query_cost or 
+            self.DEFAULT_MAX_QUERY_COST
+        )
+        self.MEMORY_CRITICAL_THRESHOLD = (
+            memory_critical_threshold or 
+            self.DEFAULT_MEMORY_CRITICAL_THRESHOLD
+        )
+        self.CPU_CRITICAL_THRESHOLD = (
+            cpu_critical_threshold or 
+            self.DEFAULT_CPU_CRITICAL_THRESHOLD
+        )
+        self.APP_MEMORY_HIGH_THRESHOLD = (
+            app_memory_high_threshold or 
+            self.DEFAULT_APP_MEMORY_HIGH_THRESHOLD
+        )
+        self.APP_MEMORY_PRESSURE_THRESHOLD = (
+            app_memory_pressure_threshold or 
+            self.DEFAULT_APP_MEMORY_PRESSURE_THRESHOLD
+        )
+        self.APP_CPU_HIGH_THRESHOLD = (
+            app_cpu_high_threshold or 
+            self.DEFAULT_APP_CPU_HIGH_THRESHOLD
+        )
 
     def analyze_query(
         self: Self,
@@ -142,7 +266,7 @@ class QueryAnalyzer:
         if not sql_query or not sql_query.strip():
             raise ValueError("Query cannot be empty")
         
-        if len(sql_query.strip()) > 10000:
+        if len(sql_query.strip()) > self.QUERY_LENGTH_LIMIT:
             raise ValueError("Query is too long for analysis")
 
         try:
@@ -196,10 +320,26 @@ class QueryAnalyzer:
             ):
                 raise psycopg.Error("Invalid execution plan format")
 
-            plan_data = (
-                execution_plan[0].get("Plan", {}) 
-                if execution_plan else {}
-            )
+            if (
+                isinstance(execution_plan, dict) and 
+                "Plan" in execution_plan
+            ):
+                plan_data = execution_plan["Plan"]
+            
+            elif (
+                isinstance(execution_plan, list) and 
+                len(execution_plan) > 0
+            ):
+                first_element = execution_plan[0]
+                if (
+                    isinstance(first_element, dict) and 
+                    "Plan" in first_element
+                ):
+                    plan_data = first_element["Plan"]
+                else:
+                    plan_data = first_element
+            else:
+                plan_data = execution_plan
 
             # Get PostgreSQL internal metrics if successful connection
             postgres_metrics = None
@@ -286,7 +426,7 @@ class QueryAnalyzer:
         """Estimate memory usage based on execution plan."""
 
         try:
-            base_memory = 1024 * 1024  # 1MB base
+            base_memory = self.BASE_MEMORY_BYTES
             
             plan_rows = plan_data.get("Plan Rows", 0)
             plan_width = plan_data.get("Plan Width", 0)
@@ -330,12 +470,12 @@ class QueryAnalyzer:
     ) -> Optional[float]:
         """Estimate CPU time based on execution plan and system."""
         try:
-            base_cpu = 0.001  # 1ms base overhead
+            base_cpu = self.BASE_CPU_SECONDS
             
             total_cost = plan_data.get("Total Cost", 0)
             
             # Convert PostgreSQL cost units to seconds
-            cost_to_cpu_factor = 0.0001
+            cost_to_cpu_factor = self.COST_TO_CPU_FACTOR
             
             # Operation complexity
             complexity_factor = 1.0
@@ -429,7 +569,7 @@ class QueryAnalyzer:
                 / (1024 * 1024)
             )
             
-            if memory_mb > 10:  # More than 10MB
+            if memory_mb > self.MEMORY_THRESHOLD_MEDIUM:
                 recs.append({
                     "type": "memory",
                     "priority": "MEDIUM",
@@ -442,7 +582,7 @@ class QueryAnalyzer:
                     "predicted_memory_mb": memory_mb
                 })
 
-            if memory_mb > 50:  # More than 50MB
+            if memory_mb > self.MEMORY_THRESHOLD_HIGH:
                 recs.append({
                     "type": "memory",
                     "priority": "HIGH",
@@ -462,7 +602,7 @@ class QueryAnalyzer:
                 * 1000
             )
 
-            if cpu_ms > 100:  # More than 100ms
+            if cpu_ms > self.CPU_THRESHOLD_MEDIUM:
                 recs.append({
                     "type": "cpu",
                     "priority": "MEDIUM",
@@ -476,7 +616,7 @@ class QueryAnalyzer:
                     "predicted_cpu_ms": cpu_ms
                 })
 
-            if cpu_ms > 500:  # More than 500ms
+            if cpu_ms > self.CPU_THRESHOLD_HIGH:
                 recs.append({
                     "type": "cpu",
                     "priority": "HIGH",
@@ -629,7 +769,7 @@ class QueryAnalyzer:
                 "priority": (
                     "LOW" if 
                         not table_size or 
-                        table_size.bytes_size < 10 * 1024 * 1024 
+                        table_size.bytes_size < self.LARGE_TABLE_THRESHOLD 
                     else "MEDIUM"
                 ),
                 "message": (
@@ -645,7 +785,7 @@ class QueryAnalyzer:
         if (
             table_size and 
             hasattr(table_size, 'bytes_size') and 
-            table_size.bytes_size > 1024 * 1024 * 100
+            table_size.bytes_size > self.LARGE_TABLE_THRESHOLD
         ):
                 filter_condition = plan_data.get(
                     "Filter", "unknown condition"
@@ -685,7 +825,7 @@ class QueryAnalyzer:
 
         if total_buffers > 0:
             cache_hit_ratio = (hit / total_buffers) * 100
-            if cache_hit_ratio < 90:
+            if cache_hit_ratio < self.CACHE_HIT_THRESHOLD:
                 recs.append({
                     "type": "configuration",
                     "priority": "MEDIUM",
@@ -708,7 +848,7 @@ class QueryAnalyzer:
     ) -> None:
         """Analyze sort operations."""
 
-        if analysis_result.plan_rows > 10000:
+        if analysis_result.plan_rows > self.SORT_THRESHOLD:
             recs.append({
                 "type": "query",
                 "priority": "MEDIUM",
@@ -763,7 +903,7 @@ class QueryAnalyzer:
             if isinstance(pg_memory, dict) else 0
         )
 
-        if pg_memory_percent > 85:
+        if pg_memory_percent > self.MEMORY_CRITICAL_THRESHOLD:
             recs.append({
                 "type": "resource",
                 "priority": "HIGH",
@@ -775,9 +915,9 @@ class QueryAnalyzer:
                 ),
                 "metric": "postgres_memory_usage",
                 "value": pg_memory_percent,
-                "threshold": 85
+                "threshold": self.MEMORY_CRITICAL_THRESHOLD
             })
-        
+
         # PostgreSQL Container CPU Usage
         pg_cpu = pg_metrics.get('cpu', {})
 
@@ -794,7 +934,7 @@ class QueryAnalyzer:
         ]
         
         if (
-            pg_cpu_percent > 90 and 
+            pg_cpu_percent > self.CPU_CRITICAL_THRESHOLD and 
             analysis_result.node_type in cpu_intensive_ops
         ):
             recs.append({
@@ -808,7 +948,7 @@ class QueryAnalyzer:
                 ),
                 "metric": "postgres_cpu_usage",
                 "value": pg_cpu_percent,
-                "threshold": 90
+                "threshold": self.CPU_CRITICAL_THRESHOLD
             })
 
         # Disk I/O Pressure Detection
@@ -822,7 +962,7 @@ class QueryAnalyzer:
             if isinstance(pg_disk_io, dict) else 0
         )
 
-        if pg_disk_write > 50 * 1024 * 1024:  # 50MB/s write threshold
+        if pg_disk_write > self.DISK_WRITE_THRESHOLD:
             recs.append({
                 "type": "io",
                 "priority": "MEDIUM",
@@ -848,8 +988,8 @@ class QueryAnalyzer:
         )
 
         if (
-            app_memory_percent > 90 and 
-            analysis_result.plan_rows > 10000
+            app_memory_percent > self.APP_MEMORY_HIGH_THRESHOLD and 
+            analysis_result.plan_rows > self.SORT_THRESHOLD
         ):
             recs.append({
                 "type": "resource",
@@ -861,7 +1001,7 @@ class QueryAnalyzer:
                 ),
                 "metric": "app_memory_usage",
                 "value": app_memory_percent,
-                "threshold": 90
+                "threshold": self.APP_MEMORY_HIGH_THRESHOLD
             })
         
         # Database Connection Pool Pressure
@@ -876,7 +1016,7 @@ class QueryAnalyzer:
             (active_connections / max_connections * 100) 
             if max_connections > 0 else 0
         )
-        if connection_ratio > 80:
+        if connection_ratio > self.CONNECTION_THRESHOLD:
             recs.append({
                 "type": "connection",
                 "priority": "MEDIUM", 
@@ -889,7 +1029,7 @@ class QueryAnalyzer:
                 ),
                 "metric": "connection_pool_usage",
                 "value": connection_ratio,
-                "threshold": 80
+                "threshold": self.CONNECTION_THRESHOLD
             })
 
         # disk IOPS
@@ -898,7 +1038,7 @@ class QueryAnalyzer:
             if isinstance(pg_disk_io, dict) else 0
         )
 
-        if pg_disk_iops > 1000:
+        if pg_disk_iops > self.DISK_IOPS_THRESHOLD:
             recs.append({
                 "type": "io",
                 "priority": "MEDIUM",
@@ -921,7 +1061,7 @@ class QueryAnalyzer:
         )
         if not container_resources:
             return
-            
+
         app_metrics = analysis_result.container_resources.get(
             'application_container', {}
         )
@@ -950,12 +1090,16 @@ class QueryAnalyzer:
             if isinstance(app_cpu, dict) else 0
         )
 
-        app_memory_pressure = app_memory_percent > 80
-        app_high_cpu = app_cpu_percent > 70
+        app_memory_pressure = (
+            app_memory_percent > self.APP_MEMORY_PRESSURE_THRESHOLD
+        )
+        app_high_cpu = (
+            app_cpu_percent > self.APP_CPU_HIGH_THRESHOLD
+        )
 
         if (
             app_memory_pressure and 
-            analysis_result.plan_rows > 10000
+            analysis_result.plan_rows > self.SORT_THRESHOLD
         ):
             recs.append({
                 "type": "scheduling",
@@ -970,7 +1114,7 @@ class QueryAnalyzer:
 
         if (
             app_high_cpu and 
-            analysis_result.total_cost > 5000
+            analysis_result.total_cost > self.MAX_QUERY_COST * 0.5
         ):
             recs.append({
                 "type": "performance", 
@@ -1210,21 +1354,36 @@ class QueryAnalyzer:
     def should_reject_query(
         self: Self,
         analysis_result: QueryAnalysisResult, 
-        max_cost: float = 10000
+        max_cost: float = None
     ) -> bool:
         """Determine if a query should be rejected."""
 
-        if analysis_result.total_cost > max_cost:
+        cost_threshold = max_cost or self.MAX_QUERY_COST
+
+        # Primary rejection:
+        # query is too expensive regardless of system state
+        if analysis_result.total_cost > cost_threshold:
             return True
-            
+ 
+        # Secondary rejection: 
+        # moderately expensive query + high memory pressure
         if analysis_result.container_resources:
             resources = analysis_result.container_resources
-
+            
+            memory_percent = 0
             if (
-                analysis_result.total_cost > max_cost * 0.7 and 
-                resources['memory']['percent_used'] > 90
+                'memory' in resources and 
+                isinstance(resources['memory'], dict) and
+                'percent_used' in resources['memory']
+            ):
+                memory_percent = resources['memory']['percent_used']
+            
+            if (
+                analysis_result.total_cost > cost_threshold * 0.7 and 
+                memory_percent > 90
             ):
                 return True
+            
                 
         return False
 

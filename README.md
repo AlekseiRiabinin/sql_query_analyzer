@@ -72,6 +72,41 @@ sql_query-analyzer/
 - Postman
 - DBeaver
 
+## 🔗 QueryAnalyzer Constants
+
+| Constant | Default Value | Description | Category |
+|----------|---------------|-------------|----------|
+| `DEFAULT_QUERY_LENGTH_LIMIT` | 10000 | Maximum allowed SQL query length in characters | Query Processing |
+| `DEFAULT_BASE_MEMORY_BYTES` | 1MB | Base memory overhead for query execution | Resource Prediction |
+| `DEFAULT_BASE_CPU_SECONDS` | 1ms | Base CPU time for query planning and setup | Resource Prediction |
+| `DEFAULT_COST_TO_CPU_FACTOR` | 0.0001 | Conversion factor from PostgreSQL cost units to CPU seconds | Resource Prediction |
+| `DEFAULT_MEMORY_THRESHOLD_MEDIUM` | 10MB | Warning threshold for predicted memory usage | Memory Thresholds |
+| `DEFAULT_MEMORY_THRESHOLD_HIGH` | 50MB | Critical threshold for predicted memory usage | Memory Thresholds |
+| `DEFAULT_CPU_THRESHOLD_MEDIUM` | 100ms | Warning threshold for predicted CPU time | CPU Thresholds |
+| `DEFAULT_CPU_THRESHOLD_HIGH` | 500ms | Critical threshold for predicted CPU time | CPU Thresholds |
+| `DEFAULT_LARGE_TABLE_THRESHOLD` | 100MB | Table size threshold for "large" classification | Table Size |
+| `DEFAULT_SORT_THRESHOLD` | 10000 | Row count threshold for expensive sort warnings | Performance |
+| `DEFAULT_CACHE_HIT_THRESHOLD` | 90% | Minimum acceptable buffer cache hit ratio | Performance |
+| `DEFAULT_CONNECTION_THRESHOLD` | 80% | Maximum connection pool usage before warning | Performance |
+| `DEFAULT_DISK_WRITE_THRESHOLD` | 50MB/s | Disk write throughput for I/O pressure detection | I/O Monitoring |
+| `DEFAULT_DISK_IOPS_THRESHOLD` | 1000 | Disk IOPS threshold for high I/O detection | I/O Monitoring |
+| `DEFAULT_MAX_QUERY_COST` | 10000 | Maximum allowed PostgreSQL query cost for rejection | Query Cost |
+| `DEFAULT_MEMORY_CRITICAL_THRESHOLD` | 85% | PostgreSQL container memory critical level | Container Resources |
+| `DEFAULT_CPU_CRITICAL_THRESHOLD` | 90% | PostgreSQL container CPU critical level | Container Resources |
+| `DEFAULT_APP_MEMORY_HIGH_THRESHOLD` | 90% | Application container memory high usage level | Container Resources |
+| `DEFAULT_APP_MEMORY_PRESSURE_THRESHOLD` | 80% | Application container memory pressure level | Container Resources |
+| `DEFAULT_APP_CPU_HIGH_THRESHOLD` | 70% | Application container CPU high usage level | Container Resources |
+
+## ⚡ AdvancedQueryAnalyzer Constants
+
+| Constant | Default Value | Description | Category |
+|----------|---------------|-------------|----------|
+| `DEFAULT_LARGE_TABLE_THRESHOLD` | 1MB | Table size for "large" classification (~1K-10K rows) | Table Size |
+| `DEFAULT_VERY_LARGE_TABLE_THRESHOLD` | 10MB | Table size for "very large" classification (~100K+ rows) | Table Size |
+| `DEFAULT_NESTED_LOOP_THRESHOLD` | 1000 | Maximum efficient row count for nested loop joins | Join Operations |
+| `DEFAULT_APPROXIMATE_COUNT_THRESHOLD` | 5000 | Row count threshold for approximate counting | Aggregation |
+| `DEFAULT_COVERING_INDEX_THRESHOLD` | 5 | Minimum columns for covering index recommendations | Indexing |
+
 ## 🛠️ Installation
 
 ### Prerequisites
