@@ -5,7 +5,7 @@ import time
 import psycopg
 from datetime import datetime
 from typing import Self, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pg_feature_extractor import PostgresFeatureExtractor
 from resource_monitor import ContainersResourceMonitor
 from pg_feature_extractor import TableSize
@@ -1427,33 +1427,81 @@ class EnhancedQueryAnalyzer(QueryAnalyzer):
             sql_query, include_resources, include_historical
         )
         
-        # Perform advanced analysis on top of the basic analysis
         if result.execution_plan:
-            print(
-                f"Execution plan structure: "
-                f"{type(result.execution_plan)}"
-            )
-            condition = (
-                result.execution_plan.keys() 
-                if isinstance(result.execution_plan, dict) 
-                else 'Not a dict'
-            )
-            print(f"Keys in execution_plan: {condition}")
-            self.advanced_metrics = (
-                self.advanced_analyzer.analyze_advanced_metrics(
+            try:
+                print(
+                    f"Advanced analysis - Execution plan type: "
+                    f"{type(result.execution_plan)}"
+                )
+                
+                if (
+                    isinstance(result.execution_plan, list) and 
                     result.execution_plan
+                ):
+                    first_item = result.execution_plan[0]
+                    print(
+                        f"Advanced analysis - First item type: "
+                        f"{type(first_item)}"
+                    )
+                    
+                    if isinstance(first_item, dict):
+                        print(
+                            f"Advanced analysis - First item keys: "
+                            f"{list(first_item.keys())}"
+                        )
+                    else:
+                        print(
+                            f"Advanced analysis - "
+                            f"First item is not a dict: {first_item}"
+                        )
+                
+                # Perform advanced analysis
+                self.advanced_metrics = (
+                    self.advanced_analyzer.analyze_advanced_metrics(
+                        result.execution_plan
+                    )
                 )
-            )
 
-            # Add advanced recommendations to result
-            if self.advanced_metrics:
-                self._add_advanced_recommendations(
-                    result, self.advanced_metrics
-                )
-                result.advanced_metrics = (
-                    self.advanced_metrics.__dict__
-                )
+                # Add advanced recommendations to result
+                if self.advanced_metrics:
+                    self._add_advanced_recommendations(
+                        result, self.advanced_metrics
+                    )
+                    
+                    # Convert to dict for serialization
+                    try:
+                        result.advanced_metrics = asdict(
+                            self.advanced_metrics
+                        )
+                        print(
+                            f"Advanced metrics added "
+                            f"successfully using asdict()"
+                        )
+                    except TypeError as e:
+                        print(
+                            f"asdict() failed: {e}, "
+                            f"trying __dict__"
+                        )
 
+                        if hasattr(
+                            self.advanced_metrics, '__dict__'
+                        ):
+                            result.advanced_metrics = (
+                                self.advanced_metrics.__dict__
+
+                            )
+                        else:
+                            result.advanced_metrics = {}
+                else:
+                    result.advanced_metrics = {}
+                    print("Advanced analysis returned no metrics")
+                    
+            except Exception as e:
+                print(f"Advanced analysis failed: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                result.advanced_metrics = {}
+        
         return result
     
     def _add_advanced_recommendations(
@@ -1462,15 +1510,30 @@ class EnhancedQueryAnalyzer(QueryAnalyzer):
         metrics: AdvancedPlanMetrics
     ) -> None:
         """Add advanced recommendations to analysis result."""
-
-        advanced_recs = []
-
-        advanced_recs.extend(metrics.join_recommendations)     
-        advanced_recs.extend(metrics.aggregation_recommendations)
-        advanced_recs.extend(metrics.partitioning_recommendations)
-        advanced_recs.extend(metrics.index_recommendations)
         
-        # Add to existing recommendations
+        advanced_recs = []
+        
+        recommendation_types = [
+            'join_recommendations',
+            'aggregation_recommendations', 
+            'partitioning_recommendations',
+            'index_recommendations'
+        ]
+        
+        for rec_type in recommendation_types:
+            if hasattr(metrics, rec_type):
+                recommendations = getattr(metrics, rec_type, [])
+
+                if (
+                    recommendations and 
+                    isinstance(recommendations, list)
+                ):
+                    advanced_recs.extend(recommendations)
+        
+        for rec in advanced_recs:
+            if isinstance(rec, dict):
+                rec['source'] = 'advanced_analyzer'
+        
         result.recommendations.extend(advanced_recs)
     
     def get_advanced_metrics(

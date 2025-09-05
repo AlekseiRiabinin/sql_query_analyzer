@@ -40,6 +40,15 @@ class QueryStats:
     mean_exec_time: float
 
 
+@dataclass
+class ForeignKeyInfo:
+    """Foreign key constraint information."""
+    constraint_name: str
+    column_name: str
+    referenced_table: str
+    referenced_column: str
+
+
 class PostgresFeatureExtractor:
     """Feature extractor of metadata and stats."""
 
@@ -384,4 +393,58 @@ class PostgresFeatureExtractor:
                 f"{table_name}: {e}"
             )
 
+            return []
+
+    def get_foreign_keys(
+        self: Self,
+        table_name: str
+    ) -> list[ForeignKeyInfo]:
+        """Get foreign key constraints for a table."""
+        
+        query = sql.SQL("""
+            SELECT 
+                tc.constraint_name,
+                kcu.column_name,
+                ccu.table_name AS referenced_table,
+                ccu.column_name AS referenced_column
+            FROM 
+                information_schema.table_constraints AS tc 
+                JOIN information_schema.key_column_usage AS kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage AS ccu
+                    ON ccu.constraint_name = tc.constraint_name
+                    AND ccu.table_schema = tc.table_schema
+            WHERE 
+                tc.constraint_type = 'FOREIGN KEY' 
+                AND tc.table_name = %s
+            ORDER BY 
+                tc.constraint_name, kcu.ordinal_position;
+        """)
+        
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (table_name,))
+                results = []
+
+                for (
+                    constraint_name,
+                    column_name,
+                    referenced_table,
+                    referenced_column
+                ) in cur.fetchall():
+
+                    results.append(ForeignKeyInfo(
+                        constraint_name=constraint_name,
+                        column_name=column_name,
+                        referenced_table=referenced_table,
+                        referenced_column=referenced_column
+                    ))
+                return results
+                
+        except psycopg.Error as e:
+            print(
+                f"Error getting foreign keys for "
+                f"{table_name}: {e}"
+            )
             return []

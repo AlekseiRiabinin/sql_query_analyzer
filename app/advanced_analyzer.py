@@ -118,46 +118,101 @@ class AdvancedQueryAnalyzer:
 
     def analyze_advanced_metrics(
         self: Self,
-        execution_plan: dict[str, Any]
+        execution_plan: Any
     ) -> AdvancedPlanMetrics:
         """Perform advanced analysis on execution plan."""
-
+        
+        print(
+            f"Advanced analysis started - "
+            f"execution_plan type: {type(execution_plan)}"
+        )
+        
         metrics = AdvancedPlanMetrics()
         
-        if (
-            not execution_plan or 
-            not isinstance(execution_plan, dict)
-        ):
+        if not execution_plan:
+            print(
+                f"No execution plan provided "
+                f"for advanced analysis"
+            )
             return metrics
         
-        if "Plan" in execution_plan:
-            plan_data = execution_plan["Plan"]
-
-        elif (
-            isinstance(execution_plan, list) and 
-            len(execution_plan) > 0
-        ):
-            first_element = execution_plan[0]
+        try:
+            plan_data = None
+            
             if (
-                isinstance(first_element, dict) and 
-                "Plan" in first_element
+                isinstance(execution_plan, list) and 
+                len(execution_plan) > 0
             ):
-                plan_data = first_element["Plan"]
-            else:
-                plan_data = first_element
-
-        else:
-            plan_data = execution_plan
-
-        # Recursively analyze plan nodes
-        self._analyze_plan_node(plan_data, metrics)
+                print(
+                    f"Execution plan is a list, "
+                    f"extracting first element"
+                )
+                first_element = execution_plan[0]
+                
+                if (
+                    isinstance(first_element, dict) and 
+                    "Plan" in first_element
+                ):
+                    plan_data = first_element["Plan"]
+                    print("Found Plan in first element")
+                else:
+                    plan_data = first_element
+                    print(
+                        f"Using first element directly "
+                        f"as plan data"
+                    )
+                    
+            elif isinstance(execution_plan, dict):
+                if "Plan" in execution_plan:
+                    plan_data = execution_plan["Plan"]
+                    print("Found Plan in dict")
+                else:
+                    plan_data = execution_plan
+                    print("Using execution_plan dict directly")
+            
+            if (
+                not plan_data or 
+                not isinstance(plan_data, dict)
+            ):
+                print(
+                    f"No valid plan data available "
+                    f"for analysis"
+                )
+                return metrics
+            
+            print(
+                f"Starting recursive plan analysis on: "
+                f"{plan_data.get('Node Type', 'Unknown')}"
+            )
+            
+            # Recursively analyze plan nodes
+            self._analyze_plan_node(plan_data, metrics)
+            
+            print(
+                f"Join analysis completed. Found "
+                f"{len(metrics.join_types)} join types"
+            )
+            print(
+                f"Missing join indexes: "
+                f"{len(metrics.missing_join_indexes)}"
+            )
+            
+            # Generate recommendations
+            self._generate_join_recommendations(metrics)
+            self._generate_aggregation_recommendations(metrics)
+            self._generate_partitioning_recommendations(metrics)
+            self._generate_index_recommendations(metrics)
+            
+            print(
+                f"Generated {len(metrics.join_recommendations)} "
+                f"join recommendations"
+            )
+            
+        except Exception as e:
+            print(f"Error in advanced analysis: {str(e)}")
+            import traceback
+            traceback.print_exc()
         
-        # Generate additional recommendations
-        self._generate_join_recommendations(metrics)
-        self._generate_aggregation_recommendations(metrics)
-        self._generate_partitioning_recommendations(metrics)
-        self._generate_index_recommendations(metrics)
-
         return metrics
     
     def _analyze_plan_node(
@@ -205,33 +260,140 @@ class AdvancedQueryAnalyzer:
         metrics: AdvancedPlanMetrics
     ) -> None:
         """Analyze join operations."""
-
+        
         node_type = node.get("Node Type", "")
-        relation_name = node.get("Relation Name", "")
-
+        print(f"Analyzing join node: {node_type}")
+        
         join_type = ""
-        if node_type and isinstance(node_type, str):
-            join_type = node_type.replace(" Join", "").lower()
+        if (
+            node_type and 
+            isinstance(node_type, str) and 
+            "Join" in node_type
+        ):
+            join_type = (
+                node_type.replace(" Join", "").lower()
+            )
         
         metrics.join_types.append(join_type)
-        if relation_name:
-            metrics.join_tables.append(relation_name)
+        print(f"Join type extracted: {join_type}")
         
-        if "Nested Loop" in node_type:
+        relation_names = []
+        if (
+            "Plans" in node and 
+            isinstance(node["Plans"], list)
+        ):
+            for plan in node["Plans"]:
+                self._extract_relation_names_from_plan(
+                    plan, relation_names
+                )
+        
+        metrics.join_tables.extend(relation_names)
+        print(f"Found relations in join: {relation_names}")
+        
+        if (
+            isinstance(node_type, str) and 
+            "Nested Loop" in node_type
+        ):
             plan_rows = node.get("Plan Rows", 0)
-            if plan_rows > self.NESTED_LOOP_THRESHOLD:
+
+            if (
+                isinstance(plan_rows, (int, float)) and 
+                plan_rows > self.NESTED_LOOP_THRESHOLD
+            ):
                 metrics.nested_loop_on_large_tables = True
+                print("Nested loop on large tables detected!")
+    
+        join_condition = None
+        for condition_key in [
+            "Join Filter", "Hash Condition", "Merge Condition"
+        ]:
+            condition = node.get(condition_key)
+            if condition and isinstance(condition, str):
+                join_condition = condition
+                break
         
-        join_condition = (
-            node.get("Join Filter") or 
-            node.get("Hash Condition") or
-            node.get("Merge Condition")
-        )
         if join_condition and isinstance(join_condition, str):
+            print(f"Join condition found: {join_condition}")
             metrics.join_conditions.append(join_condition)
-            self._analyze_join_condition(
-                join_condition, relation_name, metrics
-            )
+
+            for table_name in relation_names:
+                self._analyze_join_condition(
+                    join_condition, table_name, metrics
+                )
+
+    def _extract_relation_names_from_plan(
+        self: Self,
+        plan_node: Any,
+        relation_names: list[str]
+    ) -> None:
+        """Extract relation names from plan nodes."""
+        
+        if isinstance(plan_node, dict):
+            relation_name = None
+
+            if "Relation Name" in plan_node:
+                relation_name = plan_node["Relation Name"]
+ 
+            elif (
+                hasattr(plan_node, 'get') and 
+                callable(plan_node.get)
+            ):
+                relation_name = plan_node.get("Relation Name")
+
+            if (
+                relation_name and 
+                isinstance(relation_name, str) and 
+                relation_name not in relation_names
+            ):
+                relation_names.append(relation_name)
+                print(f"Found relation: {relation_name}")
+            
+            # Recursively check child plans
+            if (
+                "Plans" in plan_node and 
+                isinstance(plan_node["Plans"], list)
+            ):
+                for child_plan in plan_node["Plans"]:
+                    self._extract_relation_names_from_plan(
+                        child_plan, relation_names
+                    )
+
+        elif hasattr(plan_node, '__dict__'):
+            plan_dict = plan_node.__dict__
+            
+            relation_name = None
+
+            if "Relation_Name" in plan_dict:
+                relation_name = plan_dict["Relation_Name"]
+
+            elif "relation_name" in plan_dict:
+                relation_name = plan_dict["relation_name"]
+
+            elif "Relation Name" in plan_dict:
+                relation_name = plan_dict["Relation Name"]
+
+            elif hasattr(plan_node, 'Relation_Name'):
+                relation_name = getattr(
+                    plan_node, 'Relation_Name', None
+                )
+
+            elif hasattr(plan_node, 'relation_name'):
+                relation_name = getattr(
+                    plan_node, 'relation_name', None
+                )
+
+            elif hasattr(plan_node, 'Relation Name'):
+                relation_name = getattr(
+                    plan_node, 'Relation Name', None
+                )
+            
+            if (
+                relation_name and 
+                isinstance(relation_name, str) and 
+                relation_name not in relation_names
+            ):
+                relation_names.append(relation_name)
+                print(f"Found relation: {relation_name}")
 
     def _analyze_join_condition(
         self: Self,
@@ -240,17 +402,43 @@ class AdvancedQueryAnalyzer:
         metrics: AdvancedPlanMetrics
     ) -> None:
         """Analyze join conditions for missing indexes."""
-
-        column_pattern = r'(\w+)\.(\w+)'
-        column_matches = re.findall(
-            column_pattern, condition
+        
+        print(
+            f"Analyzing join condition for "
+            f"{table_name}: {condition}"
         )
 
+        column_pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)'
+        column_matches = re.findall(column_pattern, condition)
+
+        if not column_matches:
+            print(
+                f"No column patterns found in condition: "
+                f"{condition}"
+            )
+            return
+        
         for table_ref, column_name in column_matches:
-            if table_ref == table_name or not table_ref:
-                if not self._has_index_for_column(
+            print(
+                f"Found column reference: "
+                f"{table_ref}.{column_name}"
+            )
+            
+            if table_ref == table_name:
+                has_index = self._has_index_for_column(
                     table_name, column_name
-                ):
+                )
+                print(
+                    f"Index check for "
+                    f"{table_name}.{column_name}: "
+                    f"{has_index}"
+                )
+                
+                if not has_index:
+                    print(
+                        f"Missing index detected on "
+                        f"{table_name}.{column_name}"
+                    )
                     metrics.missing_join_indexes.append({
                         "table": table_name,
                         "column": column_name,
@@ -433,7 +621,7 @@ class AdvancedQueryAnalyzer:
                             f"SELECT ... FROM {table} GROUP BY ...;"
                         )
                     })
-        
+
         if metrics.approximate_count_candidate:
             recommendations.append({
                 "type": "aggregation",
@@ -563,29 +751,64 @@ class AdvancedQueryAnalyzer:
     ) -> bool:
         """Check if a column has an index."""
 
+        print(
+            f"Checking index for "
+            f"{table_name}.{column_name}"
+        )
+
         if not table_name or not column_name:
             return False
 
         if table_name not in self._index_cache:
+            print(
+                f"Loading indexes for table: "
+                f"{table_name}"
+            )
             try:
-                self._index_cache[table_name] = (
+                indexes = (
                     self.feature_extractor.get_table_indexes(
                         table_name
                     )
                 )
-            except Exception:
+                self._index_cache[table_name] = indexes
+                print(
+                    f"Found {len(indexes)} "
+                    f"indexes for {table_name}"
+                )
+
+            except Exception as e:
+                print(
+                    f"Error loading indexes for "
+                    f"{table_name}: {e}"
+                )
                 self._index_cache[table_name] = []
-        
+
         for index in self._index_cache.get(table_name, []):
-            if (
-                hasattr(index, 'index_definition') and 
-                index.index_definition
-            ):
-                if self._is_column_in_index_definition(
-                    column_name, index.index_definition
-                ):
-                    return True
+            index_def = None
+            
+            if isinstance(index, dict):
+                if "index_definition" in index:
+                    index_def = index["index_definition"]
+                elif "indexdef" in index:
+                    index_def = index["indexdef"]
         
+            if (
+                index_def and 
+                self._is_column_in_index_definition(
+                    column_name, index_def
+                )
+            ):
+                print(
+                    f"Index found for "
+                    f"{table_name}.{column_name}: "
+                    f"{index_def[:100]}..."
+                )
+                return True
+    
+        print(
+            f"No index found for "
+            f"{table_name}.{column_name}"
+        )
         return False
 
     def _is_column_in_index_definition(
@@ -675,34 +898,92 @@ class AdvancedQueryAnalyzer:
                     table_name
                 )
             )
+            
+            index_stats = (
+                self.feature_extractor.get_index_usage_stats(
+                    table_name
+                )
+            )
+            indexed_columns = set()
+            
+            for index_stat in index_stats:
+                index_name = None
+
+                if (
+                    isinstance(index_stat, dict) and 
+                    "index_name" in index_stat
+                ):
+                    index_name = index_stat["index_name"]
+
+                elif (
+                    hasattr(index_stat, 'get') and 
+                    callable(index_stat.get)
+                ):
+                    index_name = index_stat.get(
+                        "index_name", ""
+                    )
+
+                elif hasattr(index_stat, 'index_name'):
+                    index_name = getattr(
+                        index_stat, 'index_name', ""
+                    )
+                
+                if (
+                    index_name and 
+                    isinstance(index_name, str) and 
+                    '_' in index_name
+                ):
+                    try:
+                        possible_columns = index_name.split('_')[1:]
+                        indexed_columns.update(
+                            possible_columns
+                        )
+
+                    except (AttributeError, TypeError, IndexError):
+                        pass
+
             for fk in foreign_keys:
-
-                # Handle different foreign key structures
                 column_name = None
+                referenced_table = "unknown"
+                
+                if isinstance(fk, dict):
+                    column_name = (
+                        fk.get("column_name") 
+                        if "column_name" in fk 
+                        else None
+                    )
+                    referenced_table = fk.get(
+                        "referenced_table", "unknown"
+                    )
 
-                if hasattr(fk, 'column_name'):
-                    column_name = fk.column_name
-
-                elif hasattr(fk, 'column'):
-                    column_name = fk.column
+                elif hasattr(fk, 'column_name'):
+                    column_name = getattr(
+                        fk, 'column_name', None
+                    )
+                    referenced_table = getattr(
+                        fk, 'referenced_table', "unknown"
+                    )
                 
                 if (
                     column_name and 
-                    not self._has_index_for_column(
-                        table_name, column_name
-                    )
+                    isinstance(column_name, str) and 
+                    column_name not in indexed_columns
                 ):
                     missing_indexes.append({
                         "table": table_name,
                         "column": column_name,
-                        "references": (
-                            getattr(
-                                fk, 'referenced_table', 'unknown'
-                            )
-                        )
+                        "references": referenced_table,
+                        "reason": "Foreign key column missing index"
                     })
+                    print(
+                        f"Missing index on foreign key: "
+                        f"{table_name}.{column_name}"
+                    )
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(
+                f"Error checking foreign key indexes for "
+                f"{table_name}: {e}"
+            )
         
         return missing_indexes
