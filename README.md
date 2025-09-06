@@ -7,7 +7,7 @@ A sophisticated performance analysis tool for PostgreSQL queries that combines e
 - **Execution Plan Analysis**: Detailed `EXPLAIN` analysis with cost estimation
 - **Resource Prediction**: Empirical-based memory and CPU usage prediction
 - **Cross-Container Monitoring**: Real-time Docker container resource utilization
-- **Intelligent Recommendations**: AI-driven performance optimization suggestions (* In future release)
+- **Intelligent Recommendations**: Performance optimization suggestions
 - **Historical Context**: Integration with `pg_stat_statements` for trend analysis
 - **Safety Features**: Query validation and timeout protection
 - **Comprehensive Logging**: Structured logging of queries, execution plans, resource usage, and errors
@@ -16,22 +16,22 @@ A sophisticated performance analysis tool for PostgreSQL queries that combines e
 ## 📊 Architecture
 
 ```
-+-------------------------------------------------------+
-|                  Docker Host Machine                  |
-| +-----------------------------+ +-------------------+ |
-| |     FastAPI App Container   | |  PostgreSQL       | |
-| |                             | |  Container        | |
-| |  +-----------------------+  | |                   | |
-| |  | Resource Monitor      |  | |                   | |
-| |  | (Docker API, psutil)  |  | |                   | |
-| |  +-----------------------+  | |                   | |
-| |                             | |                   | |
-| |  +-----------------------+  | | +---------------+ | |
-| |  | Query Analyzer        |  | | | PostgreSQL    | | |
-| |  |                       |  | | | Process       | | |
-| |  +-----------------------+  | | +---------------+ | |
-| +-----------------------------+ +-------------------+ |
-+-------------------------------------------------------+
+╔══════════════════════════════════════════════════════════════════════╗
+║                        VTB Infrastructure                            ║
+╠═══════════════════════════════════════════════════╦══════════════════╣
+║                FastAPI Microservice               ║    PostgreSQL    ║
+║                                                   ║     Database     ║
+║  ┌─────────────────────────────────────────────┐  ║                  ║
+║  │            Resource Monitor                 │  ║                  ║
+║  │          (Docker API, psutil)               │  ║                  ║
+║  └─────────────────────────────────────────────┘  ║                  ║
+║                                                   ║                  ║
+║  ┌─────────────────────────────────────────────┐  ║  ┌─────────────┐ ║
+║  │              Query Analyzer                 │  ║  │ PostgreSQL  │ ║
+║  │                                             │  ║  │  Process    │ ║
+║  └─────────────────────────────────────────────┘  ║  └─────────────┘ ║
+║                                                   ║                  ║
+╚═══════════════════════════════════════════════════╩══════════════════╝
 ```
 
 ## 🏗️ Project Structure
@@ -72,6 +72,34 @@ sql_query-analyzer/
 - VS Code
 - Postman
 - DBeaver
+
+## 📚 PostgreSQL Processes and System Views
+
+| Process/View Name | Type | Description |
+|-------------------|------|-------------|
+| **pg_stat_statements** | Extension | Tracks execution statistics for all SQL statements executed by the server (requires installation) |
+| **pg_stat_activity** | System View | Shows one row per server process with details about current activity and queries |
+| **pg_stats** | System View | Provides access to per-column statistics about table contents (null fractions, distinct values, etc.) |
+| **pg_indexes** | System View | Contains information about all indexes in the database |
+| **pg_index** | System Catalog | Stores index information including uniqueness and maintenance data |
+| **pg_locks** | System View | Shows the locks currently held or awaited by open transactions |
+| **pg_stat_all_tables** | System View | Contains statistics about accesses to each table in the database |
+| **pg_stat_all_indexes** | System View | Contains statistics about accesses to specific indexes |
+| **pg_stat_wal** | System View | Provides statistics about Write-Ahead Log (WAL) usage and activity |
+| **pg_class** | System Catalog | Stores information about tables, indexes, and other relations |
+| **information_schema.columns** | System View | Standard SQL view showing column information for all tables |
+| **information_schema.table_constraints** | System View | Shows constraint information including foreign keys and primary keys |
+| **information_schema.key_column_usage** | System View | Identifies all columns that are constrained as keys |
+| **pg_total_relation_size()** | Function | Returns total disk space used by a table including indexes and toasted data |
+| **pg_size_pretty()** | Function | Formats a size in bytes into human-readable format (KB, MB, GB, etc.) |
+
+**Required PostgreSQL Configuration**
+
+For full functionality, ensure these settings are enabled in `postgresql.conf`:
+- `shared_preload_libraries = 'pg_stat_statements'`
+- `track_activities = on`
+- `track_counts = on`
+- `pg_stat_statements.track = all`
 
 ## 🔗 QueryAnalyzer Constants
 
