@@ -4,6 +4,7 @@
 import re
 from typing import Optional, Any, Self
 from dataclasses import dataclass, field
+from constants import Defaults
 from pg_feature_extractor import (
     TableSize,
     IndexInfo,
@@ -74,13 +75,6 @@ class AdvancedPlanMetrics:
 class AdvancedQueryAnalyzer:
     """Enhanced query analyzer with advanced features."""
     
-    # Adjusted for ~10,000 row tables
-    DEFAULT_LARGE_TABLE_THRESHOLD = 1024 * 1024 * 1        # 1MB (tables with ~1K-10K rows)
-    DEFAULT_VERY_LARGE_TABLE_THRESHOLD = 1024 * 1024 * 10  # 10MB (tables with ~100K+ rows)
-    DEFAULT_NESTED_LOOP_THRESHOLD = 1000                   # Number of rows
-    DEFAULT_APPROXIMATE_COUNT_THRESHOLD = 5000             # Number of rows
-    DEFAULT_COVERING_INDEX_THRESHOLD = 5                   # >5 columns
-
     def __init__(
         self: Self,
         feature_extractor: PostgresFeatureExtractor,
@@ -97,23 +91,23 @@ class AdvancedQueryAnalyzer:
         # Set thresholds with defaults
         self.LARGE_TABLE_THRESHOLD = (
             large_table_threshold or 
-            self.DEFAULT_LARGE_TABLE_THRESHOLD
+            Defaults.LARGE_TABLE_THRESHOLD
         )
         self.VERY_LARGE_TABLE_THRESHOLD = (
             very_large_table_threshold or 
-            self.DEFAULT_VERY_LARGE_TABLE_THRESHOLD
+            Defaults.VERY_LARGE_TABLE_THRESHOLD
         )
         self.NESTED_LOOP_THRESHOLD = (
             nested_loop_threshold or 
-            self.DEFAULT_NESTED_LOOP_THRESHOLD
+            Defaults.NESTED_LOOP_THRESHOLD
         )
         self.APPROXIMATE_COUNT_THRESHOLD = (
             approximate_count_threshold or 
-            self.DEFAULT_APPROXIMATE_COUNT_THRESHOLD
+            Defaults.APPROXIMATE_COUNT_THRESHOLD
         )
         self.COVERING_INDEX_THRESHOLD = (
             covering_index_threshold or 
-            self.DEFAULT_COVERING_INDEX_THRESHOLD
+            Defaults.COVERING_INDEX_THRESHOLD
         )
 
     def analyze_advanced_metrics(
@@ -555,14 +549,23 @@ class AdvancedQueryAnalyzer:
                 "message": (
                     f"Nested loop join detected on "
                     f"large result set. "
-                    f"Consider using hash joins or "
-                    f"merge joins for better performance "
-                    f"on large datasets."
+                    f"Performance improvements:\n"
+                    f"1. Use hash joins for large datasets\n"
+                    f"2. Ensure proper indexes exist\n"
+                    f"3. Consider increasing work_mem for "
+                    f"hash operations"
                 ),
-                "suggestion": (
-                    f"Enable hash joins with "
-                    f"SET enable_nestloop = off; for testing"
-                )
+                "suggestions": [
+                    (
+                        f"SET enable_nestloop = off; "
+                        f"-- Test hash joins"
+                    ),
+                    "CREATE INDEX on join columns",
+                    (
+                        f"SET work_mem = '16MB'; "
+                        f"-- For better hash performance"
+                    )
+                ]
             })
 
         for missing_index in metrics.missing_join_indexes:
@@ -573,18 +576,22 @@ class AdvancedQueryAnalyzer:
                     f"Missing index on "
                     f"{missing_index['table']}."
                     f"{missing_index['column']} "
-                    f"used in join condition: "
-                    f"{missing_index['condition']}"
+                    f"used in join condition. "
+                    f"This index could improve join performance "
+                    f"by {missing_index.get(
+                        'potential_improvement', 'significant'
+                    )}%."
                 ),
                 "table": missing_index["table"],
                 "column": missing_index["column"],
                 "index_suggestion": (
-                    f"CREATE INDEX idx_"
+                    f"CREATE INDEX CONCURRENTLY idx_"
                     f"{missing_index['table']}_"
                     f"{missing_index['column']} "
                     f"ON {missing_index['table']} "
                     f"({missing_index['column']});"
-                )
+                ),
+                "estimated_improvement": "20-50% faster joins"
             })
         
         metrics.join_recommendations = recommendations
@@ -608,18 +615,26 @@ class AdvancedQueryAnalyzer:
                         "type": "aggregation",
                         "priority": "MEDIUM",
                         "message": (
-                            f"Expensive aggregation operation "
-                            f"on large table '{table}' "
+                            f"Expensive aggregation on "
+                            f"large table '{table}' "
                             f"({table_size.pretty_size}). "
-                            f"Consider using materialized views "
-                            f"for pre-aggregated results."
+                            f"Optimization strategies:\n"
+                            f"1. Use materialized views for "
+                            f"pre-aggregation\n"
+                            f"2. Add appropriate indexes\n"
+                            f"3. Consider incremental aggregation"
                         ),
                         "table": table,
-                        "suggestion": (
+                        "suggestions": [
                             f"CREATE MATERIALIZED VIEW "
-                            f"mv_aggregated_data AS "
-                            f"SELECT ... FROM {table} GROUP BY ...;"
-                        )
+                            f"mv_{table}_aggregates "
+                            f"AS SELECT ... FROM "
+                            f"{table} GROUP BY ...;",
+                            f"CREATE INDEX idx_{table}_grouping "
+                            f"ON {table} (grouping_columns);",
+                            f"SET work_mem = '32MB'; "
+                            f"-- For large aggregations"
+                        ]
                     })
 
         if metrics.approximate_count_candidate:
@@ -629,14 +644,25 @@ class AdvancedQueryAnalyzer:
                 "message": (
                     f"COUNT(*) operation on "
                     f"large table without filters. "
-                    f"If exact count is not required, "
-                    f"consider using approximate count "
-                    f"techniques for better performance."
+                    f"Approximate count alternatives:\n"
+                    f"1. Use pg_stat_user_tables.n_live_tup\n"
+                    f"2. Use sampling techniques\n"
+                    f"3. Maintain counter table "
+                    f"if exact counts needed"
                 ),
-                "suggestion": (
-                    f"Use pg_stat_user_tables or "
-                    f"sampling for approximate counts"
-                )
+                "suggestions": [
+                    (
+                        f"SELECT n_live_tup FROM "
+                        f"pg_stat_user_tables WHERE "
+                        f"relname = 'table_name';"
+                    ),
+                    "Use TABLESAMPLE for approximate counts",
+                    (
+                        f"CREATE TABLE count_stats "
+                        f"(table_name text, count bigint, "
+                        f"updated_at timestamp);"
+                    )
+                ]
             })
 
         metrics.aggregation_recommendations = recommendations
@@ -657,18 +683,24 @@ class AdvancedQueryAnalyzer:
                     f"Large table '{candidate['table']}' "
                     f"({candidate['pretty_size']}) "
                     f"with range-based filters detected. "
-                    f"Consider table partitioning "
-                    f"for better query performance "
-                    f"and maintenance."
+                    f"Partitioning benefits:\n"
+                    f"1. Faster query performance\n"
+                    f"2. Easier maintenance\n"
+                    f"3. Better vacuum efficiency"
                 ),
                 "table": candidate["table"],
                 "size": candidate["pretty_size"],
                 "filter_condition": candidate["filter_condition"],
-                "suggestion": (
-                    f"Investigate partitioning "
-                    f"{candidate['table']} "
-                    f"by date range or key range"
-                )
+                "suggestions": [
+                    f"CREATE TABLE "
+                    f"{candidate['table']}_partitioned "
+                    f"(LIKE {candidate['table']}) "
+                    f"PARTITION BY RANGE (date_column);",
+                    f"CREATE INDEX ON {candidate['table']} "
+                    f"(partition_key);",
+                    f"Consider using pg_partman for "
+                    f"automatic partitioning"
+                ]
             })
         
         metrics.partitioning_recommendations = recommendations
@@ -696,6 +728,7 @@ class AdvancedQueryAnalyzer:
                                 table
                             )
                         )
+
                         threshold = self.COVERING_INDEX_THRESHOLD
                         if (
                             table_columns and 
@@ -714,6 +747,32 @@ class AdvancedQueryAnalyzer:
                                 "table": table,
                                 "column_count": len(table_columns)
                             })
+
+                        table_size = self._get_table_size(table)
+                        if (
+                            table_size and 
+                            table_size.bytes_size > self.VERY_LARGE_TABLE_THRESHOLD
+                        ):
+                            recommendations.append({
+                                "type": "index_strategy",
+                                "priority": "LOW",
+                                "message": (
+                                    f"Very large table "
+                                    f"'{table}' detected. "
+                                    f"Consider BRIN indexes "
+                                    f"for range queries on "
+                                    f"timestamp/date columns "
+                                    f"to save space."
+                                ),
+                                "table": table,
+                                "suggestion": (
+                                    f"CREATE INDEX "
+                                    f"idx_{table}_timestamp_brin "
+                                    f"ON {table} USING BRIN "
+                                    f"(timestamp_column);"
+                                )
+                            })
+
                     except Exception:
                         pass
         

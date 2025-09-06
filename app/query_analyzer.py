@@ -8,6 +8,7 @@ from typing import Self, Any, Optional
 from dataclasses import dataclass, field, asdict
 from pg_feature_extractor import PostgresFeatureExtractor
 from resource_monitor import ContainersResourceMonitor
+from constants import Defaults
 from pg_feature_extractor import TableSize
 from advanced_analyzer import (
     AdvancedQueryAnalyzer,
@@ -126,28 +127,6 @@ class QueryAnalysisResult:
 class QueryAnalyzer:
     """Analyzes SQL queries with EXPLAIN."""
 
-    # Default constants for ~10,000 row scale
-    DEFAULT_QUERY_LENGTH_LIMIT = 10000
-    DEFAULT_BASE_MEMORY_BYTES = 1024 * 1024            # 1MB
-    DEFAULT_BASE_CPU_SECONDS = 0.001                   # 1ms
-    DEFAULT_COST_TO_CPU_FACTOR = 0.0001
-    DEFAULT_MEMORY_THRESHOLD_MEDIUM = 10               # 10MB
-    DEFAULT_MEMORY_THRESHOLD_HIGH = 50                 # 50MB
-    DEFAULT_CPU_THRESHOLD_MEDIUM = 100                 # 100ms
-    DEFAULT_CPU_THRESHOLD_HIGH = 500                   # 500ms
-    DEFAULT_LARGE_TABLE_THRESHOLD = 1024 * 1024 * 100  # 100MB
-    DEFAULT_SORT_THRESHOLD = 10000
-    DEFAULT_CACHE_HIT_THRESHOLD = 90                   # 90%
-    DEFAULT_CONNECTION_THRESHOLD = 80                  # 80%
-    DEFAULT_DISK_WRITE_THRESHOLD = 50 * 1024 * 1024    # 50MB/s
-    DEFAULT_DISK_IOPS_THRESHOLD = 1000
-    DEFAULT_MAX_QUERY_COST = 10000
-    DEFAULT_MEMORY_CRITICAL_THRESHOLD = 85             # 85% memory usage
-    DEFAULT_CPU_CRITICAL_THRESHOLD = 90                # 90% CPU usage
-    DEFAULT_APP_MEMORY_HIGH_THRESHOLD = 90             # 90% app memory usage
-    DEFAULT_APP_MEMORY_PRESSURE_THRESHOLD = 80         # 80% memory usage
-    DEFAULT_APP_CPU_HIGH_THRESHOLD = 70                # 70% CPU usage
-
     def __init__(
         self: Self,
         connection: psycopg.Connection,
@@ -178,91 +157,91 @@ class QueryAnalyzer:
         self.resource_monitor = None
         self.feature_extractor = PostgresFeatureExtractor(connection)
 
-        # Initialize cache for historical data to avoid repeated queries
+        # Init cache for historical data to avoid repeated queries
         self._historical_cache: dict[str, dict[str, Any]] = {}
         self._cache_timestamps: dict[str, float] = {}
-        self.cache_ttl = 300  # 5 minutes TTL for cache
+        self.cache_ttl = Defaults.CACHE_TTL
 
         # Set thresholds with defaults
         self.QUERY_LENGTH_LIMIT = (
             query_length_limit or 
-            self.DEFAULT_QUERY_LENGTH_LIMIT
+            Defaults.QUERY_LENGTH_LIMIT
         )
         self.BASE_MEMORY_BYTES = (
             base_memory_bytes or 
-            self.DEFAULT_BASE_MEMORY_BYTES
+            Defaults.BASE_MEMORY_BYTES
         )
         self.BASE_CPU_SECONDS = (
             base_cpu_seconds or 
-            self.DEFAULT_BASE_CPU_SECONDS
+            Defaults.BASE_CPU_SECONDS
         )
         self.COST_TO_CPU_FACTOR = (
             cost_to_cpu_factor or 
-            self.DEFAULT_COST_TO_CPU_FACTOR
+            Defaults.COST_TO_CPU_FACTOR
         )
         self.MEMORY_THRESHOLD_MEDIUM = (
             memory_threshold_medium or 
-            self.DEFAULT_MEMORY_THRESHOLD_MEDIUM
+            Defaults.MEMORY_THRESHOLD_MEDIUM
         )
         self.MEMORY_THRESHOLD_HIGH = (
             memory_threshold_high or 
-            self.DEFAULT_MEMORY_THRESHOLD_HIGH
+            Defaults.MEMORY_THRESHOLD_HIGH
         )
         self.CPU_THRESHOLD_MEDIUM = (
             cpu_threshold_medium or 
-            self.DEFAULT_CPU_THRESHOLD_MEDIUM
+            Defaults.CPU_THRESHOLD_MEDIUM
         )
         self.CPU_THRESHOLD_HIGH = (
             cpu_threshold_high or 
-            self.DEFAULT_CPU_THRESHOLD_HIGH
+            Defaults.CPU_THRESHOLD_HIGH
         )
         self.LARGE_TABLE_THRESHOLD = (
             large_table_threshold or 
-            self.DEFAULT_LARGE_TABLE_THRESHOLD
+            Defaults.LARGE_TABLE_THRESHOLD
         )
         self.SORT_THRESHOLD = (
             sort_threshold or 
-            self.DEFAULT_SORT_THRESHOLD
+            Defaults.SORT_THRESHOLD
         )
         self.CACHE_HIT_THRESHOLD = (
             cache_hit_threshold or 
-            self.DEFAULT_CACHE_HIT_THRESHOLD
+            Defaults.CACHE_HIT_THRESHOLD
         )
         self.CONNECTION_THRESHOLD = (
             connection_threshold or 
-            self.DEFAULT_CONNECTION_THRESHOLD
+            Defaults.CONNECTION_THRESHOLD
         )
         self.DISK_WRITE_THRESHOLD = (
             disk_write_threshold or 
-            self.DEFAULT_DISK_WRITE_THRESHOLD
+            Defaults.DISK_WRITE_THRESHOLD
         )
         self.DISK_IOPS_THRESHOLD = (
             disk_iops_threshold or 
-            self.DEFAULT_DISK_IOPS_THRESHOLD
+            Defaults.DISK_IOPS_THRESHOLD
         )
         self.MAX_QUERY_COST = (
             max_query_cost or 
-            self.DEFAULT_MAX_QUERY_COST
+            Defaults.MAX_QUERY_COST
         )
         self.MEMORY_CRITICAL_THRESHOLD = (
             memory_critical_threshold or 
-            self.DEFAULT_MEMORY_CRITICAL_THRESHOLD
+            Defaults.MEMORY_CRITICAL_THRESHOLD
         )
         self.CPU_CRITICAL_THRESHOLD = (
             cpu_critical_threshold or 
-            self.DEFAULT_CPU_CRITICAL_THRESHOLD
+            Defaults.CPU_CRITICAL_THRESHOLD
         )
         self.APP_MEMORY_HIGH_THRESHOLD = (
             app_memory_high_threshold or 
-            self.DEFAULT_APP_MEMORY_HIGH_THRESHOLD
+            Defaults.APP_MEMORY_HIGH_THRESHOLD
         )
         self.APP_MEMORY_PRESSURE_THRESHOLD = (
             app_memory_pressure_threshold or 
-            self.DEFAULT_APP_MEMORY_PRESSURE_THRESHOLD
+            Defaults.APP_MEMORY_PRESSURE_THRESHOLD
         )
         self.APP_CPU_HIGH_THRESHOLD = (
             app_cpu_high_threshold or 
-            self.DEFAULT_APP_CPU_HIGH_THRESHOLD
+            Defaults.APP_CPU_HIGH_THRESHOLD
         )
 
     def analyze_query(
@@ -581,16 +560,26 @@ class QueryAnalyzer:
             )
             
             if memory_mb > self.MEMORY_THRESHOLD_MEDIUM:
+                # Recommended work_mem (1.5x predicted memory)
+                recommended_work_mem = max(
+                    4, int(memory_mb * 1.5)
+                )
                 recs.append({
                     "type": "memory",
                     "priority": "MEDIUM",
                     "message": (
                         f"Query predicted to use "
                         f"{memory_mb:.1f}MB memory. "
-                        f"Consider optimizing with smaller "
-                        f"batches or indexes."
+                        f"Consider increasing work_mem to "
+                        f"{recommended_work_mem}MB "
+                        f"for this session: SET work_mem = "
+                        f"'{recommended_work_mem}MB';"
                     ),
-                    "predicted_memory_mb": memory_mb
+                    "predicted_memory_mb": memory_mb,
+                    "suggestion": (
+                        f"SET work_mem = "
+                        f"'{recommended_work_mem}MB';"
+                    )
                 })
 
             if memory_mb > self.MEMORY_THRESHOLD_HIGH:
@@ -600,11 +589,21 @@ class QueryAnalyzer:
                     "message": (
                         f"High memory usage predicted "
                         f"({memory_mb:.1f}MB). "
-                        f"This may impact other queries. "
-                        f"Consider increasing "
-                        f"work_mem or optimizing query structure."
+                        f"This may impact other queries. Consider: "
+                        f"1. Increasing work_mem temporarily\n"
+                        f"2. Using smaller batches\n"
+                        f"3. Adding appropriate indexes\n"
+                        f"4. Reviewing query structure for "
+                        f"memory-intensive operations"
                     ),
-                    "predicted_memory_mb": memory_mb
+                    "predicted_memory_mb": memory_mb,
+                    "suggestions": [
+                        f"SET work_mem = '64MB'; "
+                        f"-- Adjust based on system capacity",
+                        f"Break query into smaller batches if possible",
+                        f"Ensure proper indexes exist on "
+                        f"filtered/sorted columns"
+                    ]
                 })
         
         if analysis_result.predicted_cpu_seconds:
@@ -620,11 +619,18 @@ class QueryAnalyzer:
                     "message": (
                         f"Query predicted to use "
                         f"{cpu_ms:.0f}ms CPU time. "
-                        f"Consider optimizing with "
-                        f"better indexes or "
-                        f"simplifying complex operations."
+                        f"Optimization suggestions:\n"
+                        f"1. Add indexes on filtered/sorted columns\n"
+                        f"2. Use WHERE clauses to reduce processed rows\n"
+                        f"3. Consider materialized views for "
+                        f"complex aggregations"
                     ),
-                    "predicted_cpu_ms": cpu_ms
+                    "predicted_cpu_ms": cpu_ms,
+                    "suggestions": [
+                        "CREATE INDEX on frequently filtered columns",
+                        "Use EXPLAIN ANALYZE to identify bottlenecks",
+                        "Consider partitioning large tables"
+                    ]
                 })
 
             if cpu_ms > self.CPU_THRESHOLD_HIGH:
@@ -632,13 +638,19 @@ class QueryAnalyzer:
                     "type": "cpu",
                     "priority": "HIGH",
                     "message": (
-                        f"High CPU usage predicted "
-                        f"({cpu_ms:.0f}ms). "
-                        f"This may impact system performance. "
-                        f"Consider running during off-peak hours "
-                        f"or optimizing further."
+                        f"High CPU usage predicted ({cpu_ms:.0f}ms). "
+                        f"Critical optimization needed:\n"
+                        f"1. Run during off-peak hours\n"
+                        f"2. Add missing indexes immediately\n"
+                        f"3. Consider query rewriting\n"
+                        f"4. Evaluate table partitioning"
                     ),
-                    "predicted_cpu_ms": cpu_ms
+                    "predicted_cpu_ms": cpu_ms,
+                    "suggestions": [
+                        "Schedule during maintenance windows",
+                        "CREATE INDEX on join and filter columns",
+                        "Review query for unnecessary complexity"
+                    ]
                 })
 
     def _get_resource_monitor(self: Self) -> ContainersResourceMonitor:
@@ -920,13 +932,28 @@ class QueryAnalyzer:
                 "priority": "HIGH",
                 "message": (
                     f"PostgreSQL container memory usage "
-                    f"is critically high ({pg_memory_percent}%). "
-                    f"High-cost queries may cause "
-                    f"out-of-memory errors."
+                    f"critically high ({pg_memory_percent}%). "
+                    f"Immediate actions:\n"
+                    f"1. Increase container memory limits\n"
+                    f"2. Optimize shared_buffers and work_mem\n"
+                    f"3. Monitor for memory-intensive queries\n"
+                    f"4. Consider connection pooling to reduce "
+                    f"memory per connection"
                 ),
                 "metric": "postgres_memory_usage",
                 "value": pg_memory_percent,
-                "threshold": self.MEMORY_CRITICAL_THRESHOLD
+                "threshold": self.MEMORY_CRITICAL_THRESHOLD,
+                "suggestions": [
+                    (
+                        f"ALTER SYSTEM SET shared_buffers = "
+                        f"'25% of total RAM';"
+                    ),
+                    (
+                        f"ALTER SYSTEM SET work_mem = '4MB'; "
+                        f"-- Adjust based on usage"
+                    ),
+                    "Consider using pgbouncer for connection pooling"
+                ]
             })
 
         # PostgreSQL Container CPU Usage
@@ -952,14 +979,29 @@ class QueryAnalyzer:
                 "type": "performance",
                 "priority": "MEDIUM",
                 "message": (
-                    f"PostgreSQL CPU usage is very high "
+                    f"PostgreSQL CPU usage very high "
                     f"({pg_cpu_percent}%). "
                     f"CPU-intensive {analysis_result.node_type} "
-                    f"operations may be slower than expected."
+                    f"operations detected.\n"
+                    f"Suggestions:\n"
+                    f"1. Add appropriate indexes\n"
+                    f"2. Increase effective_cache_size\n"
+                    f"3. Consider parallel query settings"
                 ),
                 "metric": "postgres_cpu_usage",
                 "value": pg_cpu_percent,
-                "threshold": self.CPU_CRITICAL_THRESHOLD
+                "threshold": self.CPU_CRITICAL_THRESHOLD,
+                "suggestions": [
+                    "CREATE INDEX on frequently accessed columns",
+                    (
+                        f"ALTER SYSTEM SET effective_cache_size = "
+                        f"'75% of total RAM';"
+                    ),
+                    (
+                        f"SET max_parallel_workers_per_gather = 4; "
+                        f"-- If appropriate"
+                    )
+                ]
             })
 
         # Disk I/O Pressure Detection
@@ -1033,14 +1075,24 @@ class QueryAnalyzer:
                 "priority": "MEDIUM", 
                 "message": (
                     f"High database connection usage "
-                    f"({active_connections}/{max_connections} "
-                    f"connections, {connection_ratio:.1f}%). "
-                    f"Consider optimizing connection pooling "
-                    f"or increasing max_connections."
+                    f"({active_connections}/{max_connections}, "
+                    f"{connection_ratio:.1f}%).\n"
+                    f"Solutions:\n"
+                    f"1. Implement connection pooling (pgbouncer)\n"
+                    f"2. Increase max_connections if needed\n"
+                    f"3. Review application connection management"
                 ),
                 "metric": "connection_pool_usage",
                 "value": connection_ratio,
-                "threshold": self.CONNECTION_THRESHOLD
+                "threshold": self.CONNECTION_THRESHOLD,
+                "suggestions": [
+                    (
+                        f"ALTER SYSTEM SET max_connections = 200; "
+                        f"-- If system can handle"
+                    ),
+                    "Implement pgbouncer with transaction pooling",
+                    "Review application connection timeout settings"
+                ]
             })
 
         # disk IOPS
@@ -1055,6 +1107,10 @@ class QueryAnalyzer:
                 "priority": "MEDIUM",
                 "message": "High disk IOPS detected"
             })
+
+        self._add_autovacuum_recommendations(
+            analysis_result, recs
+        )
 
     def _generate_resource_aware_recommendations(
             self: Self,
@@ -1361,6 +1417,94 @@ class QueryAnalyzer:
                     "message": "Query using index-only scan",
                     "optimization": "index_only_scan"
                 })
+
+    def _add_autovacuum_recommendations(
+        self: Self,
+        analysis_result: QueryAnalysisResult,
+        recs: list[dict[str, Any]]
+    ) -> None:
+        """Add autovacuum tuning recommendations."""
+
+        try:
+            if not hasattr(
+                self.feature_extractor, 'get_table_statistics'
+            ):
+                return
+                
+            table_stats = (
+                self.feature_extractor.get_table_statistics()
+            )
+            
+            if not table_stats:
+                return
+            
+            main_table = analysis_result.relation_name
+            
+            for table_stat in table_stats:
+                n_dead_tup = table_stat.get('n_dead_tup', 0)
+                n_live_tup = table_stat.get('n_live_tup', 0)
+                table_name = (
+                    f"{table_stat.get('schemaname', 'public')}."
+                    f"{table_stat.get('table_name', 'unknown')}"
+                )
+                
+                if n_live_tup > 0 and n_dead_tup > 1000:
+                    dead_tuple_ratio = (
+                        n_dead_tup / n_live_tup
+                    ) * 100
+                    
+                    if dead_tuple_ratio > 10:
+                        is_main_table = (
+                            main_table and 
+                            (main_table == table_stat.get('table_name') or 
+                            main_table in table_name)
+                        )
+                        
+                        priority = "HIGH" if is_main_table else "MEDIUM"
+                        
+                        message = (
+                            f"Table '{table_name}' has "
+                            f"{dead_tuple_ratio:.1f}% "
+                            f"dead tuples ({n_dead_tup:,} "
+                            f"dead of {n_live_tup:,} total)."
+                        )
+                        
+                        if is_main_table:
+                            message += (
+                                f" This is the main table in your query "
+                                f"and may significantly impact performance."
+                            )
+                        
+                        recs.append({
+                            "type": "maintenance",
+                            "priority": priority,
+                            "message": message,
+                            "table": table_name,
+                            "dead_tuples": n_dead_tup,
+                            "live_tuples": n_live_tup,
+                            "dead_tuple_ratio": dead_tuple_ratio,
+                            "is_main_query_table": is_main_table,
+                            "suggestions": [
+                                (
+                                    f"ALTER TABLE {table_name} "
+                                    f"SET (autovacuum_vacuum_scale_factor = 0.05, "
+                                    f"autovacuum_vacuum_threshold = 1000);"
+                                ),
+                                (
+                                    f"VACUUM ANALYZE {table_name}; "
+                                    f"-- For immediate cleanup"
+                                ),
+                                (
+                                    f"Check autovacuum settings: "
+                                    f"SHOW autovacuum_vacuum_scale_factor; "
+                                    f"SHOW autovacuum_vacuum_threshold;"
+                                )
+                            ]
+                        })
+                        
+        except Exception as e:
+            print(f"Debug: Autovacuum recommendation error: {e}")
+            pass
 
     def should_reject_query(
         self: Self,

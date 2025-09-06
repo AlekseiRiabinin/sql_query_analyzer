@@ -56,13 +56,14 @@ sql_query-analyzer/
 │   ├── advanced_analyzer.py
 │   ├── pg_feature_extractor.py
 │   ├── resource_monitor.py
+│   ├── constants.py
 ├── logs/    
 ├── requirements.txt
 ├── .env
 └── README.md
 
 ```
-## ⚙️ Teck stack
+## ⚙️ Tech stack
 - Python 3.12
 - PostgreSQL 17.5
 - Docker
@@ -376,7 +377,7 @@ The CI/CD workflow is defined in `.github/workflows/ci-cd.yml` and runs on push 
 8. **Failure Debugging:** Automatically outputs PostgreSQL logs if any step fails, aiding in rapid troubleshooting.
 
 
-## 📚 References
+## 🎓 References
 1. Mason, K. et al. (2018). Predicting host CPU utilization in the cloud using evolutionary neural networks. Future Generation Computer Systems.
 
 2. Liu, X. (2024). Towards CPU Performance Prediction: New Challenge Benchmark Dataset and Novel Approach.

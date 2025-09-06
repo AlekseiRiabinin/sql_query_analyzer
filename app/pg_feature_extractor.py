@@ -448,3 +448,46 @@ class PostgresFeatureExtractor:
                 f"{table_name}: {e}"
             )
             return []
+
+
+    def get_table_statistics(
+        self: Self
+    ) -> list[dict[str, Any]]:
+        """Get table statistics."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        schemaname,
+                        relname as table_name,
+                        n_live_tup,
+                        n_dead_tup,
+                        last_vacuum,
+                        last_autovacuum,
+                        last_analyze,
+                        last_autoanalyze,
+                        vacuum_count,
+                        autovacuum_count,
+                        analyze_count,
+                        autoanalyze_count
+                    FROM pg_stat_user_tables
+                    WHERE n_live_tup > 0
+                    ORDER BY n_dead_tup DESC
+                    LIMIT 20
+                """)
+                
+                results = []
+                columns = [desc[0] for desc in cur.description]
+                
+                for row in cur.fetchall():
+                    table_stats = dict(zip(columns, row))
+                    results.append(table_stats)
+                
+                return results
+                
+        except Exception as e:
+            print(
+                f"Warning: Could not get "
+                f"table statistics: {e}"
+            )
+            return []
