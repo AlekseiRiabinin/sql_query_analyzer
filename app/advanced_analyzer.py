@@ -547,20 +547,22 @@ class AdvancedQueryAnalyzer:
                 "type": "join_strategy",
                 "priority": "HIGH",
                 "message": (
-                    f"Nested loop join detected on "
-                    f"large result set. "
-                    f"Performance improvements:\n"
-                    f"1. Use hash joins for large datasets\n"
-                    f"2. Ensure proper indexes exist\n"
-                    f"3. Consider increasing work_mem for "
-                    f"hash operations"
+                    f"Nested loop join detected "
+                    f"on large result set. "
+                    f"Performance improvements: "
+                    f"Use hash joins for large datasets; "
+                    f"Ensure proper indexes exist; "
+                    f"Consider increasing work_mem "
+                    f"for hash operations"
                 ),
                 "suggestions": [
                     (
                         f"SET enable_nestloop = off; "
                         f"-- Test hash joins"
                     ),
-                    "CREATE INDEX on join columns",
+                    (
+                        f"CREATE INDEX on join columns"
+                    ),
                     (
                         f"SET work_mem = '16MB'; "
                         f"-- For better hash performance"
@@ -615,25 +617,31 @@ class AdvancedQueryAnalyzer:
                         "type": "aggregation",
                         "priority": "MEDIUM",
                         "message": (
-                            f"Expensive aggregation on "
-                            f"large table '{table}' "
+                            f"Expensive aggregation "
+                            f"on large table '{table}' "
                             f"({table_size.pretty_size}). "
-                            f"Optimization strategies:\n"
-                            f"1. Use materialized views for "
-                            f"pre-aggregation\n"
-                            f"2. Add appropriate indexes\n"
-                            f"3. Consider incremental aggregation"
+                            f"Optimization strategies: "
+                            f"Use materialized views "
+                            f"for pre-aggregation; "
+                            f"Add appropriate indexes; "
+                            f"Consider incremental aggregation"
                         ),
                         "table": table,
                         "suggestions": [
-                            f"CREATE MATERIALIZED VIEW "
-                            f"mv_{table}_aggregates "
-                            f"AS SELECT ... FROM "
-                            f"{table} GROUP BY ...;",
-                            f"CREATE INDEX idx_{table}_grouping "
-                            f"ON {table} (grouping_columns);",
-                            f"SET work_mem = '32MB'; "
-                            f"-- For large aggregations"
+                            (
+                                f"CREATE MATERIALIZED "
+                                f"VIEW mv_{table}_aggregates "
+                                f"AS SELECT ... FROM {table} "
+                                f"GROUP BY ...;"
+                            ),
+                            (
+                                f"CREATE INDEX idx_{table}_grouping "
+                                f"ON {table} (grouping_columns);"
+                            ),
+                            (
+                                f"SET work_mem = '32MB'; "
+                                f"-- For large aggregations"
+                            )
                         ]
                     })
 
@@ -642,21 +650,24 @@ class AdvancedQueryAnalyzer:
                 "type": "aggregation",
                 "priority": "LOW",
                 "message": (
-                    f"COUNT(*) operation on "
-                    f"large table without filters. "
-                    f"Approximate count alternatives:\n"
-                    f"1. Use pg_stat_user_tables.n_live_tup\n"
-                    f"2. Use sampling techniques\n"
-                    f"3. Maintain counter table "
-                    f"if exact counts needed"
+                    f"COUNT(*) operation on large "
+                    f"table without filters. "
+                    f"Approximate count alternatives: "
+                    f"Use pg_stat_user_tables.n_live_tup; "
+                    f"Use sampling techniques; "
+                    f"Maintain counter table if "
+                    f"exact counts needed"
                 ),
                 "suggestions": [
                     (
-                        f"SELECT n_live_tup FROM "
-                        f"pg_stat_user_tables WHERE "
-                        f"relname = 'table_name';"
+                        f"SELECT n_live_tup "
+                        f"FROM pg_stat_user_tables "
+                        f"WHERE relname = 'table_name';"
                     ),
-                    "Use TABLESAMPLE for approximate counts",
+                    (
+                        f"Use TABLESAMPLE for "
+                        f"approximate counts"
+                    ),
                     (
                         f"CREATE TABLE count_stats "
                         f"(table_name text, count bigint, "
@@ -683,23 +694,29 @@ class AdvancedQueryAnalyzer:
                     f"Large table '{candidate['table']}' "
                     f"({candidate['pretty_size']}) "
                     f"with range-based filters detected. "
-                    f"Partitioning benefits:\n"
-                    f"1. Faster query performance\n"
-                    f"2. Easier maintenance\n"
-                    f"3. Better vacuum efficiency"
+                    f"Partitioning benefits: "
+                    f"Faster query performance; "
+                    f"Easier maintenance; "
+                    f"Better vacuum efficiency"
                 ),
                 "table": candidate["table"],
                 "size": candidate["pretty_size"],
                 "filter_condition": candidate["filter_condition"],
                 "suggestions": [
-                    f"CREATE TABLE "
-                    f"{candidate['table']}_partitioned "
-                    f"(LIKE {candidate['table']}) "
-                    f"PARTITION BY RANGE (date_column);",
-                    f"CREATE INDEX ON {candidate['table']} "
-                    f"(partition_key);",
-                    f"Consider using pg_partman for "
-                    f"automatic partitioning"
+                    (
+                        f"CREATE TABLE "
+                        f"{candidate['table']}_partitioned "
+                        f"(LIKE {candidate['table']}) "
+                        f"PARTITION BY RANGE (date_column);"
+                    ),
+                    (
+                        f"CREATE INDEX ON {candidate['table']} "
+                        f"(partition_key);"
+                    ),
+                    (
+                        f"Consider using pg_partman "
+                        f"for automatic partitioning"
+                    )
                 ]
             })
         
@@ -729,10 +746,10 @@ class AdvancedQueryAnalyzer:
                             )
                         )
 
-                        threshold = self.COVERING_INDEX_THRESHOLD
+                        idx_threshold = self.COVERING_INDEX_THRESHOLD
                         if (
                             table_columns and 
-                            len(table_columns) > threshold
+                            len(table_columns) > idx_threshold
                         ):
                             recommendations.append({
                                 "type": "covering_index",
@@ -749,9 +766,10 @@ class AdvancedQueryAnalyzer:
                             })
 
                         table_size = self._get_table_size(table)
+                        table_threshold = self.VERY_LARGE_TABLE_THRESHOLD
                         if (
                             table_size and 
-                            table_size.bytes_size > self.VERY_LARGE_TABLE_THRESHOLD
+                            table_size.bytes_size > table_threshold
                         ):
                             recommendations.append({
                                 "type": "index_strategy",
@@ -932,7 +950,7 @@ class AdvancedQueryAnalyzer:
         """Check if this is COUNT operation without filters."""
 
         plan_rows = node.get("Plan Rows", 0)
-        threshold = self.DEFAULT_APPROXIMATE_COUNT_THRESHOLD
+        threshold = self.APPROXIMATE_COUNT_THRESHOLD
 
         return (
             plan_rows > threshold and 

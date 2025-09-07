@@ -1,7 +1,9 @@
 """Analyzer of SQL queries."""
 
 
+import re
 import time
+import json
 import psycopg
 from datetime import datetime
 from typing import Self, Any, Optional
@@ -255,8 +257,10 @@ class QueryAnalyzer:
         # Input validation
         if not sql_query or not sql_query.strip():
             raise ValueError("Query cannot be empty")
-        
-        if len(sql_query.strip()) > self.QUERY_LENGTH_LIMIT:
+
+        cleaned_query = ' '.join(sql_query.splitlines()).strip()
+
+        if len(cleaned_query.strip()) > self.QUERY_LENGTH_LIMIT:
             raise ValueError("Query is too long for analysis")
 
         try:
@@ -360,7 +364,7 @@ class QueryAnalyzer:
 
             # Create analysis result with all collected data
             analysis_result = QueryAnalysisResult(
-                query=sql_query,
+                query=cleaned_query,
                 total_cost=plan_data.get("Total Cost", 0),
                 plan_rows=plan_data.get("Plan Rows", 0),
                 node_type=plan_data.get("Node Type", "Unknown"),
@@ -590,19 +594,26 @@ class QueryAnalyzer:
                         f"High memory usage predicted "
                         f"({memory_mb:.1f}MB). "
                         f"This may impact other queries. Consider: "
-                        f"1. Increasing work_mem temporarily\n"
-                        f"2. Using smaller batches\n"
-                        f"3. Adding appropriate indexes\n"
-                        f"4. Reviewing query structure for "
+                        f"Increasing work_mem temporarily; "
+                        f"Using smaller batches; "
+                        f"Adding appropriate indexes; "
+                        f"Reviewing query structure for "
                         f"memory-intensive operations"
                     ),
                     "predicted_memory_mb": memory_mb,
                     "suggestions": [
-                        f"SET work_mem = '64MB'; "
-                        f"-- Adjust based on system capacity",
-                        f"Break query into smaller batches if possible",
-                        f"Ensure proper indexes exist on "
-                        f"filtered/sorted columns"
+                        (
+                            f"SET work_mem = '64MB'; "
+                            f"-- Adjust based on system capacity"
+                        ),
+                        (
+                            f"Break query into smaller "
+                            f"batches if possible"
+                        ),
+                        (
+                            f"Ensure proper indexes exist "
+                            f"on filtered/sorted columns"
+                        )
                     ]
                 })
         
@@ -619,17 +630,28 @@ class QueryAnalyzer:
                     "message": (
                         f"Query predicted to use "
                         f"{cpu_ms:.0f}ms CPU time. "
-                        f"Optimization suggestions:\n"
-                        f"1. Add indexes on filtered/sorted columns\n"
-                        f"2. Use WHERE clauses to reduce processed rows\n"
-                        f"3. Consider materialized views for "
-                        f"complex aggregations"
+                        f"Optimization suggestions: "
+                        f"Add indexes on "
+                        f"filtered/sorted columns; "
+                        f"Use WHERE clauses to "
+                        f"reduce processed rows; "
+                        f"Consider materialized views "
+                        f"for complex aggregations"
                     ),
                     "predicted_cpu_ms": cpu_ms,
                     "suggestions": [
-                        "CREATE INDEX on frequently filtered columns",
-                        "Use EXPLAIN ANALYZE to identify bottlenecks",
-                        "Consider partitioning large tables"
+                        (
+                            f"CREATE INDEX on "
+                            f"frequently filtered columns"
+                        ),
+                        (
+                            f"Use EXPLAIN ANALYZE to "
+                            f"identify bottlenecks"
+                        ),
+                        (
+                            f"Consider partitioning "
+                            f"large tables"
+                        )
                     ]
                 })
 
@@ -638,18 +660,28 @@ class QueryAnalyzer:
                     "type": "cpu",
                     "priority": "HIGH",
                     "message": (
-                        f"High CPU usage predicted ({cpu_ms:.0f}ms). "
-                        f"Critical optimization needed:\n"
-                        f"1. Run during off-peak hours\n"
-                        f"2. Add missing indexes immediately\n"
-                        f"3. Consider query rewriting\n"
-                        f"4. Evaluate table partitioning"
+                        f"High CPU usage predicted "
+                        f"({cpu_ms:.0f}ms). "
+                        f"Critical optimization needed: "
+                        f"Run during off-peak hours; "
+                        f"Add missing indexes immediately; "
+                        f"Consider query rewriting; "
+                        f"Evaluate table partitioning"
                     ),
                     "predicted_cpu_ms": cpu_ms,
                     "suggestions": [
-                        "Schedule during maintenance windows",
-                        "CREATE INDEX on join and filter columns",
-                        "Review query for unnecessary complexity"
+                        (
+                            f"Schedule during "
+                            f"maintenance windows"
+                        ),
+                        (
+                            f"CREATE INDEX on join "
+                            f"and filter columns"
+                        ),
+                        (
+                            f"Review query for "
+                            f"unnecessary complexity"
+                        )
                     ]
                 })
 
@@ -695,8 +727,13 @@ class QueryAnalyzer:
                 if results:
                     stats_list = []
                     for row in results:
+
+                        cleaned_query = (
+                            re.sub(r'\r?\n', ' ', row[0]).strip()
+                        )
+
                         stats_list.append({
-                            "query": row[0],
+                            "query": cleaned_query,
                             "calls": row[1],
                             "total_exec_time": row[2],
                             "mean_exec_time": row[3],
@@ -931,14 +968,15 @@ class QueryAnalyzer:
                 "type": "resource",
                 "priority": "HIGH",
                 "message": (
-                    f"PostgreSQL container memory usage "
-                    f"critically high ({pg_memory_percent}%). "
-                    f"Immediate actions:\n"
-                    f"1. Increase container memory limits\n"
-                    f"2. Optimize shared_buffers and work_mem\n"
-                    f"3. Monitor for memory-intensive queries\n"
-                    f"4. Consider connection pooling to reduce "
-                    f"memory per connection"
+                    f"PostgreSQL container memory "
+                    f"usage critically high "
+                    f"({pg_memory_percent}%). "
+                    f"Immediate actions: "
+                    f"Increase container memory limits; "
+                    f"Optimize shared_buffers and work_mem; "
+                    f"Monitor for memory-intensive queries; "
+                    f"Consider connection pooling to "
+                    f"reduce memory per connection"
                 ),
                 "metric": "postgres_memory_usage",
                 "value": pg_memory_percent,
@@ -952,7 +990,10 @@ class QueryAnalyzer:
                         f"ALTER SYSTEM SET work_mem = '4MB'; "
                         f"-- Adjust based on usage"
                     ),
-                    "Consider using pgbouncer for connection pooling"
+                    (
+                        f"Consider using pgbouncer "
+                        f"for connection pooling"
+                    )
                 ]
             })
 
@@ -982,20 +1023,23 @@ class QueryAnalyzer:
                     f"PostgreSQL CPU usage very high "
                     f"({pg_cpu_percent}%). "
                     f"CPU-intensive {analysis_result.node_type} "
-                    f"operations detected.\n"
-                    f"Suggestions:\n"
-                    f"1. Add appropriate indexes\n"
-                    f"2. Increase effective_cache_size\n"
-                    f"3. Consider parallel query settings"
+                    f"operations detected. "
+                    f"Suggestions: "
+                    f"Add appropriate indexes; "
+                    f"Increase effective_cache_size; "
+                    f"Consider parallel query settings"
                 ),
                 "metric": "postgres_cpu_usage",
                 "value": pg_cpu_percent,
                 "threshold": self.CPU_CRITICAL_THRESHOLD,
                 "suggestions": [
-                    "CREATE INDEX on frequently accessed columns",
                     (
-                        f"ALTER SYSTEM SET effective_cache_size = "
-                        f"'75% of total RAM';"
+                        f"CREATE INDEX on frequently "
+                        f"accessed columns"
+                    ),
+                    (
+                        f"ALTER SYSTEM SET effective_cache_size "
+                        f"= '75% of total RAM';"
                     ),
                     (
                         f"SET max_parallel_workers_per_gather = 4; "
@@ -1050,7 +1094,8 @@ class QueryAnalyzer:
                 "message": (
                     f"Application container memory usage "
                     f"is high ({app_memory_percent}%). "
-                    f"Large result sets may increase memory pressure."
+                    f"Large result sets may "
+                    f"increase memory pressure."
                 ),
                 "metric": "app_memory_usage",
                 "value": app_memory_percent,
@@ -1076,11 +1121,11 @@ class QueryAnalyzer:
                 "message": (
                     f"High database connection usage "
                     f"({active_connections}/{max_connections}, "
-                    f"{connection_ratio:.1f}%).\n"
-                    f"Solutions:\n"
-                    f"1. Implement connection pooling (pgbouncer)\n"
-                    f"2. Increase max_connections if needed\n"
-                    f"3. Review application connection management"
+                    f"{connection_ratio:.1f}%). "
+                    f"Solutions: "
+                    f"Implement connection pooling (pgbouncer); "
+                    f"Increase max_connections if needed; "
+                    f"Review application connection management"
                 ),
                 "metric": "connection_pool_usage",
                 "value": connection_ratio,
@@ -1090,8 +1135,14 @@ class QueryAnalyzer:
                         f"ALTER SYSTEM SET max_connections = 200; "
                         f"-- If system can handle"
                     ),
-                    "Implement pgbouncer with transaction pooling",
-                    "Review application connection timeout settings"
+                    (
+                        f"Implement pgbouncer with "
+                        f"transaction pooling"
+                    ),
+                    (
+                        f"Review application connection "
+                        f"timeout settings"
+                    )
                 ]
             })
 
@@ -1335,19 +1386,21 @@ class QueryAnalyzer:
         return True
 
     def _classify_query_type(
-            self: Self,
-            analysis_result: QueryAnalysisResult,
-            sql_query: str
+        self: Self,
+        analysis_result: QueryAnalysisResult,
+        sql_query: str
     ) -> None:
         """Classify query type and set relevant flags."""
         
-        query_upper = sql_query.upper().strip()
+        query_lines = []
+        for line in sql_query.splitlines():
+            clean_line = line.split('--')[0].strip()
+            if clean_line:
+                query_lines.append(clean_line)
         
-        query_clean = ' '.join(
-            line for line in query_upper.split('\n') 
-            if not line.strip().startswith('--')
-        ).strip()
+        query_clean = ' '.join(query_lines).upper()
         
+        # Query type classification
         if query_clean.startswith(('WITH', 'SELECT')):
             analysis_result.query_type = "SELECT"
             analysis_result.is_read_only = True
@@ -1364,7 +1417,9 @@ class QueryAnalyzer:
             analysis_result.query_type = "DELETE" 
             analysis_result.is_read_only = False
             
-        elif query_clean.startswith(('CREATE', 'DROP', 'ALTER')):
+        elif query_clean.startswith(
+            ('CREATE', 'DROP', 'ALTER')
+        ):
             analysis_result.query_type = "DDL"
             analysis_result.is_read_only = False
             
@@ -1383,38 +1438,49 @@ class QueryAnalyzer:
             )
         
         if analysis_result.execution_plan:
-            plan_str = str(analysis_result.execution_plan).upper()
+            if isinstance(
+                analysis_result.execution_plan,
+                (dict, list)
+            ):
+                plan_str = json.dumps(
+                    analysis_result.execution_plan
+                ).upper()
+            else:
+                plan_str = str(
+                    analysis_result.execution_plan
+                ).upper()
             
+            join_patterns = [
+                'JOIN', 'NESTED LOOP', 'HASH JOIN',
+                'MERGE JOIN', 'NESTED LOOP INNER',
+                'NESTED LOOP LEFT', 'HASH INNER JOIN'
+            ]
             analysis_result.contains_join = any(
-                join_pattern in plan_str 
-                for join_pattern in [
-                    'JOIN', 'NESTED LOOP', 'HASH JOIN',
-                    'MERGE JOIN', 'NESTED LOOP INNER',
-                    'NESTED LOOP LEFT', 'HASH INNER JOIN'
-                ]
+                pattern in plan_str 
+                for pattern in join_patterns
             )
 
+            sort_patterns = ['SORT', 'ORDER BY', 'SORT KEY']
             analysis_result.contains_sort = any(
-                sort_pattern in plan_str 
-                for sort_pattern in [
-                    'SORT', 'ORDER BY', 'SORT KEY'
-                ]
+                pattern in plan_str 
+                for pattern in sort_patterns
             )
             
+            agg_patterns = [
+                'AGGREGATE', 'GROUP', 'HASHAGG',
+                'GROUPAGG', 'GROUP BY', 
+                'COUNT(', 'SUM(', 'AVG(', 'MAX(', 'MIN('
+            ]
             analysis_result.contains_aggregate = any(
-                agg_pattern in plan_str 
-                for agg_pattern in [
-                    'AGGREGATE', 'GROUP', 'HASHAGG',
-                    'GROUPAGG', 'GROUP BY', 
-                    'COUNT(', 'SUM(', 'AVG(', 'MAX(', 'MIN('
-                ]
+                pattern in plan_str 
+                for pattern in agg_patterns
             )
             
             if 'INDEX ONLY SCAN' in plan_str:
                 analysis_result.recommendations.append({
                     "type": "performance",
                     "priority": "LOW", 
-                    "message": "Query using index-only scan",
+                    "message": "Query using efficient index-only scan",
                     "optimization": "index_only_scan"
                 })
 
